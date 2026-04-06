@@ -5,21 +5,26 @@ from pvx.core.vram import VRAMManager
 from pvx.core.events import event_bus
 from pvx.core.config import AppConfig
 
+# Completed tasks older than this limit are pruned from the in-memory list.
+# Keeps memory bounded in long-running sessions.
+MAX_COMPLETED_TASKS = 200
+
+
 class TaskQueueEngine:
     def __init__(self, vram_manager: VRAMManager, config: AppConfig):
         self.current_batch_size: int = 0
         self.batch_start: datetime = datetime.now()
         self.affinity_reset: bool = False
         self._streaming_buffers: Dict[str, str] = {}  # task_id → partial output
-        
+
         self.vram_manager = vram_manager
         self.config = config
-        
+
         self.AFFINITY_BATCH_MAX_TASKS = config.queue.affinity_batch_max_tasks
         self.AFFINITY_BATCH_MAX_SECONDS = config.queue.affinity_batch_max_seconds
         self.STARVATION_TIMEOUT_SECONDS = config.queue.starvation_timeout_seconds
         self.PARTIAL_SAVE_MIN_TOKENS = config.queue.partial_save_min_tokens
-        
+
         self.pending_tasks: List[Task] = []
 
     def reset_affinity_batch(self):
@@ -36,6 +41,10 @@ class TaskQueueEngine:
     def get_current_output(self, task: Task) -> str:
         """Returns partial output accumulated so far for a running task."""
         return self._streaming_buffers.get(task.id, "")
+
+    def release_streaming_buffer(self, task_id: str) -> None:
+        """Free the streaming buffer for a completed task to reclaim memory."""
+        self._streaming_buffers.pop(task_id, None)
 
     def get_pending_with_deps_resolved(self) -> List[Task]:
         """Return pending tasks whose dependencies are all done.
@@ -69,7 +78,7 @@ class TaskQueueEngine:
         pending = self.get_pending_with_deps_resolved()
         if not pending:
             return None
-            
+
         now = datetime.now()
 
         # Step 0: Starvation guard
@@ -86,7 +95,7 @@ class TaskQueueEngine:
             })
             return winner
 
-        # Step 1: Critical tasks always go first
+        # Step 1: Critical tasks always go first (priority 5 = highest/critical)
         critical = [t for t in pending if t.priority == 5]
         if critical:
             return max(critical, key=lambda t: t.priority)
@@ -94,17 +103,24 @@ class TaskQueueEngine:
         # Step 2: Check affinity batch limits
         batch_size_exceeded = self.current_batch_size >= self.AFFINITY_BATCH_MAX_TASKS
         batch_time_exceeded = (now - self.batch_start).total_seconds() >= self.AFFINITY_BATCH_MAX_SECONDS
-        
+
         if batch_size_exceeded or batch_time_exceeded:
             self.reset_affinity_batch()
 
-        # Step 3: Model affinity
+        # Step 3: Model affinity with switch-penalty lookahead.
+        # Prefer tasks for the currently loaded model even if slightly lower priority
+        # (within 1 priority level) to avoid expensive model-switch overhead.
         current_model = self.vram_manager.get_loaded_model()
         if current_model and not self.affinity_reset:
             affinity_tasks = [t for t in pending if t.model == current_model]
             if affinity_tasks:
-                self.current_batch_size += 1
-                return max(affinity_tasks, key=lambda t: (t.priority, -t.created_at.timestamp()))
+                # Only use affinity if the best affinity task is within 1 priority
+                # of the overall best task — avoids blocking urgent work
+                best_affinity_priority = max(t.priority for t in affinity_tasks)
+                best_overall_priority = max(t.priority for t in pending)
+                if best_affinity_priority >= best_overall_priority - 1:
+                    self.current_batch_size += 1
+                    return max(affinity_tasks, key=lambda t: (t.priority, -t.created_at.timestamp()))
 
         # Step 4: No affinity match — pick highest priority available
         # Reset affinity flag so next task selection can use affinity again
@@ -112,6 +128,7 @@ class TaskQueueEngine:
         return max(pending, key=lambda t: (t.priority, -t.created_at.timestamp()))
 
     def should_preempt(self, incoming: Task, running: Task) -> bool:
+        # Priority 5 = critical/urgent, priority 1 = low/background
         if incoming.priority == 5 and running.priority <= 3:
             return True
         if incoming.priority == 4 and running.priority == 1:
@@ -120,7 +137,7 @@ class TaskQueueEngine:
 
     def handle_preemption(self, incoming: Task, running: Task):
         tokens_generated = running.tokens_generated_so_far
-        
+
         if tokens_generated < self.PARTIAL_SAVE_MIN_TOKENS:
             running.partial_output = None
             running.status = "preempted"
@@ -134,10 +151,37 @@ class TaskQueueEngine:
                 f"{running.partial_output}\n"
                 "[END PARTIAL — CONTINUE THE IMPLEMENTATION]"
             )
-            
+
         event_bus.emit("TASK_PREEMPTED", {
             "task_id": running.id,
             "tokens_generated": tokens_generated,
             "partial_saved": running.partial_output is not None,
             "preempted_by": incoming.id
         })
+
+    def prune_completed_tasks(self) -> int:
+        """
+        Evict old completed/failed/blocked tasks from memory.
+
+        Keeps the most recent MAX_COMPLETED_TASKS terminal-state tasks and
+        removes the rest. Also frees their streaming buffers.
+        Returns the number of tasks pruned.
+        """
+        terminal = [
+            t for t in self.pending_tasks
+            if t.status in ("done", "failed", "blocked", "timeout")
+        ]
+        if len(terminal) <= MAX_COMPLETED_TASKS:
+            return 0
+
+        # Sort by completion time (or creation time as fallback), drop oldest
+        terminal_sorted = sorted(
+            terminal,
+            key=lambda t: t.completed_at or t.created_at
+        )
+        to_remove = terminal_sorted[:-MAX_COMPLETED_TASKS]
+        for t in to_remove:
+            self.pending_tasks.remove(t)
+            self.release_streaming_buffer(t.id)
+
+        return len(to_remove)

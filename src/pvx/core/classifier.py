@@ -52,12 +52,13 @@ class TaskClassifier:
         "formatting":        r"format|lint|style|pep8|black|prettier",
     }
 
-    KEYWORD_CONFIDENCE_THRESHOLD = 0.5   # Below this → escalate to Claude
+    KEYWORD_CONFIDENCE_THRESHOLD = 0.6   # Below this → escalate to Claude
     DEFAULT_FALLBACK_CATEGORY = "complex_code"
 
-    def __init__(self, cli_model: BaseModelInterface):
+    def __init__(self, cli_model: BaseModelInterface, circuit_breaker=None):
         self.cli_model = cli_model
         self._cache: Dict[str, ClassificationResult] = {}
+        self.circuit_breaker = circuit_breaker
 
     def classify(self, prompt: str) -> ClassificationResult:
         # Level 1: Cache — same prompt this session, zero cost
@@ -70,7 +71,7 @@ class TaskClassifier:
         # Level 2: Keyword matching — free, zero subprocess calls
         keyword_result = self._classify_keywords(prompt)
 
-        if keyword_result.confidence >= self.KEYWORD_CONFIDENCE_THRESHOLD:
+        if keyword_result.confidence > self.KEYWORD_CONFIDENCE_THRESHOLD:
             # High-confidence keyword match → accept, cache, return
             self._cache[prompt_hash] = keyword_result
             return keyword_result
@@ -101,7 +102,12 @@ class TaskClassifier:
                 confidence=0.0,
             )
 
-        confidence = 0.8 if len(matches) == 1 else 0.5
+        if len(matches) == 1:
+            confidence = 0.8
+        elif len(matches) == 2:
+            confidence = 0.65   # two matches, still above threshold — no escalation
+        else:
+            confidence = 0.5    # 3+ matches = genuinely ambiguous, escalate
         return ClassificationResult(
             category=matches[0],
             source="keyword_fallback",
@@ -179,21 +185,32 @@ class TaskClassifier:
             f'Task: {prompt}'
         )
 
+        if self.circuit_breaker and not self.circuit_breaker.is_allowed():
+            return ClassificationResult(error="CLASSIFIER_CIRCUIT_OPEN")
+
         result = self.cli_model.generate(prompt=classification_prompt, history=[])
 
         if result.error:
+            if self.circuit_breaker:
+                self.circuit_breaker.record_failure()
             return ClassificationResult(error=result.error)
 
         if not result.content:
+            if self.circuit_breaker:
+                self.circuit_breaker.record_failure()
             return ClassificationResult(error="CLI_EMPTY_RESPONSE")
 
         data = self._extract_json_balanced(result.content)
         if not data:
+            if self.circuit_breaker:
+                self.circuit_breaker.record_failure()
             return ClassificationResult(error=f"CLI_PARSE_ERROR: {result.content[:100]}")
 
         category = data.get("category", "").strip()
         if category not in self.KEYWORD_PRIORITY + ["architecture", "final_review"]:
             # Claude returned a category outside the allowed set — fall back
+            if self.circuit_breaker:
+                self.circuit_breaker.record_failure()
             return ClassificationResult(
                 error=f"CLI_INVALID_CATEGORY: {category}"
             )
@@ -202,6 +219,9 @@ class TaskClassifier:
             confidence = float(data.get("confidence", 0.7))
         except (TypeError, ValueError):
             confidence = 0.7
+
+        if self.circuit_breaker:
+            self.circuit_breaker.record_success()
 
         return ClassificationResult(
             category=category,

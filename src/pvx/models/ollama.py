@@ -1,7 +1,10 @@
 import ollama
 import time
 from typing import List, Optional
+import structlog
 from pvx.models.base import BaseModelInterface, Message, GenerationResult
+
+logger = structlog.get_logger()
 
 class OllamaModel(BaseModelInterface):
     def __init__(self, model_name: str, task_queue=None, current_task_id: Optional[str] = None):
@@ -25,6 +28,7 @@ class OllamaModel(BaseModelInterface):
                 messages=messages,
                 tools=tools,
                 stream=True,
+                keep_alive=300,
                 options={"num_predict": 8192, "num_ctx": 16384, "temperature": 0.2}
             )
 
@@ -55,6 +59,15 @@ class OllamaModel(BaseModelInterface):
                 duration_ms=int((time.time() - start_time) * 1000),
                 error=str(e)
             )
+
+    def unload(self) -> None:
+        """Release this model from Ollama VRAM via keep_alive=0."""
+        try:
+            import ollama as _ollama
+            _ollama.generate(model=self.model_name, prompt="", keep_alive=0)
+            logger.info("ollama_model_unloaded", model=self.model_name)
+        except Exception as exc:
+            logger.warning("ollama_unload_failed", model=self.model_name, error=str(exc))
 
     def is_available(self) -> bool:
         try:

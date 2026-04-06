@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "pvx": {
+      "command": "uv",
+      "args": ["run", "python", "-m", "pvx.mcp.server"],
+      "cwd": "${workspaceFolder}",
+      "env": {}
+    }
+  }
+}
