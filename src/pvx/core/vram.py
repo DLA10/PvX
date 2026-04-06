@@ -88,6 +88,17 @@ class VRAMManager:
     def can_load(self, model: str) -> bool:
         state = self.poll()
         required = self.MODEL_VRAM_MB.get(model, 0)
+        # Check PRESSURE state: free VRAM below safety buffer even without this model
+        if state.free_mb < self.SAFETY_BUFFER_MB:
+            if self.state not in (State.ZOMBIE, State.EXTERNAL):
+                self.state = State.PRESSURE
+            event_bus.emit("VRAM_PRESSURE", {
+                "free_mb": state.free_mb,
+                "safety_buffer_mb": self.SAFETY_BUFFER_MB,
+            })
+            logger.warning("vram_pressure",
+                           free_mb=state.free_mb,
+                           safety_buffer_mb=self.SAFETY_BUFFER_MB)
         return state.free_mb >= required + self.SAFETY_BUFFER_MB
 
     def get_loaded_model(self) -> Optional[str]:

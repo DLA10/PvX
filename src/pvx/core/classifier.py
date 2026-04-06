@@ -147,5 +147,66 @@ class TaskClassifier:
 
         return None
 
-    def _classify_via_cli(self, prompt: str, keyword_hint: ClassificationResult) -> ClassificationResult:
-        raise NotImplementedError("Implemented by Claude reviewer.")
+    def _classify_via_cli(self, prompt: str,
+                          keyword_hint: ClassificationResult) -> ClassificationResult:
+        """
+        Claude escalation for ambiguous tasks.
+
+        Called ONLY when keyword confidence < 0.5 or zero matches.
+        Provides the keyword hint so Claude can agree or override efficiently —
+        this reduces Claude's reasoning burden and produces more consistent JSON.
+
+        Prompt is designed to:
+        - Give Claude a constrained category list (no free-form answers)
+        - Anchor on the keyword hint (agree/override pattern is reliable)
+        - Demand JSON-only output (no preamble — strips cleanly after ANSI removal)
+        - Keep the prompt short to minimise tokens spent on classification
+        """
+        valid_categories = ", ".join(self.KEYWORD_PRIORITY + ["architecture", "final_review"])
+
+        classification_prompt = (
+            f'You are a task classifier for an AI orchestration platform.\n'
+            f'A keyword classifier suggested "{keyword_hint.category}" '
+            f'with {keyword_hint.confidence:.0%} confidence.\n\n'
+            f'Classify the following developer task into exactly ONE of these categories:\n'
+            f'{valid_categories}\n\n'
+            f'Rules:\n'
+            f'- Respond with JSON only. No explanation, no preamble, no markdown fences.\n'
+            f'- "confidence" must be a float 0.0–1.0.\n'
+            f'- "reasoning" must be one sentence maximum.\n\n'
+            f'Response format:\n'
+            f'{{"category": "<category>", "confidence": 0.0, "reasoning": "<one sentence>"}}\n\n'
+            f'Task: {prompt}'
+        )
+
+        result = self.cli_model.generate(prompt=classification_prompt, history=[])
+
+        if result.error:
+            return ClassificationResult(error=result.error)
+
+        if not result.content:
+            return ClassificationResult(error="CLI_EMPTY_RESPONSE")
+
+        data = self._extract_json_balanced(result.content)
+        if not data:
+            return ClassificationResult(error=f"CLI_PARSE_ERROR: {result.content[:100]}")
+
+        category = data.get("category", "").strip()
+        if category not in self.KEYWORD_PRIORITY + ["architecture", "final_review"]:
+            # Claude returned a category outside the allowed set — fall back
+            return ClassificationResult(
+                error=f"CLI_INVALID_CATEGORY: {category}"
+            )
+
+        try:
+            confidence = float(data.get("confidence", 0.7))
+        except (TypeError, ValueError):
+            confidence = 0.7
+
+        return ClassificationResult(
+            category=category,
+            confidence=min(max(confidence, 0.0), 1.0),  # clamp to [0, 1]
+            reasoning=str(data.get("reasoning", "")),
+            classified_by="claude",
+            source="claude-escalation",
+        )

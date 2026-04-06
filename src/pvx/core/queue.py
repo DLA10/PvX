@@ -107,6 +107,8 @@ class TaskQueueEngine:
                 return max(affinity_tasks, key=lambda t: (t.priority, -t.created_at.timestamp()))
 
         # Step 4: No affinity match — pick highest priority available
+        # Reset affinity flag so next task selection can use affinity again
+        self.affinity_reset = False
         return max(pending, key=lambda t: (t.priority, -t.created_at.timestamp()))
 
     def should_preempt(self, incoming: Task, running: Task) -> bool:

@@ -101,7 +101,7 @@ class AppConfig(BaseModel):
     security: SecurityConfig
     mcp_servers: Optional[MCPServersConfig] = None
 
-def load_config(config_path: str = "pvx.config.yaml") -> AppConfig:
+def load_config(config_path: str = "pvx.config.yaml") -> Optional[AppConfig]:
     path = Path(config_path)
     if not path.exists():
         path = Path("pvx.config.example.yaml")
