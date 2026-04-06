@@ -1,0 +1,112 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Global reset ─────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  background: #000000;
+  color: #ff6600;
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  overflow: hidden;
+}
+
+/* ─── CRT scanline overlay ──────────────────────────────────── */
+#root::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 3px,
+    rgba(0, 0, 0, 0.18) 3px,
+    rgba(0, 0, 0, 0.18) 4px
+  );
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* ─── CRT vignette ──────────────────────────────────────────── */
+#root::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,0.7) 100%);
+  pointer-events: none;
+  z-index: 9998;
+}
+
+/* ─── Glow text utilities ───────────────────────────────────── */
+.glow-or    { text-shadow: 0 0 6px #ff6600, 0 0 12px #ff4500; }
+.glow-amber { text-shadow: 0 0 6px #ffaa00, 0 0 12px #ff8c00; }
+.glow-maroon{ text-shadow: 0 0 6px #8b0000, 0 0 12px #5c0000; }
+.glow-dim   { text-shadow: 0 0 4px #cc4400; }
+
+/* ─── Panel borders ─────────────────────────────────────────── */
+.panel {
+  background: #080000;
+  border: 1px solid #4a0000;
+  box-shadow: 0 0 6px rgba(255,102,0,0.12), inset 0 0 6px rgba(139,0,0,0.08);
+}
+
+.panel-bright {
+  background: #0d0000;
+  border: 1px solid #8b0000;
+  box-shadow: 0 0 12px rgba(255,102,0,0.2), inset 0 0 8px rgba(139,0,0,0.1);
+}
+
+/* ─── ASCII progress bar ────────────────────────────────────── */
+.bar-fill {
+  color: #ff6600;
+  text-shadow: 0 0 8px #ff6600, 0 0 16px #ff4500;
+  letter-spacing: 0.5px;
+}
+.bar-empty {
+  color: #3d1500;
+}
+
+/* ─── Scrollbar ─────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: #000; }
+::-webkit-scrollbar-thumb { background: #5c0000; border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: #8b0000; }
+
+/* ─── Terminal input ────────────────────────────────────────── */
+.term-input {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #ff8c00;
+  font-family: inherit;
+  font-size: inherit;
+  caret-color: #ff6600;
+  width: 100%;
+}
+
+/* ─── Status pill ───────────────────────────────────────────── */
+.status-running { color: #ff8c00; text-shadow: 0 0 6px #ff6600; }
+.status-pending { color: #cc4400; }
+.status-done    { color: #6b2500; }
+.status-failed  { color: #ff0000; text-shadow: 0 0 6px #ff0000; }
+
+/* ─── Blink ─────────────────────────────────────────────────── */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+.cursor { animation: blink 1s step-end infinite; }
+.cursor-slow { animation: blink 2s step-end infinite; }
+
+/* ─── Boot flicker (one-shot) ───────────────────────────────── */
+@keyframes flicker {
+  0%   { opacity: 0; }
+  10%  { opacity: 1; }
+  12%  { opacity: 0.3; }
+  14%  { opacity: 1; }
+  100% { opacity: 1; }
+}
+.boot-flicker { animation: flicker 0.4s ease-out forwards; }
