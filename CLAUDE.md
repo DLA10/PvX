@@ -84,7 +84,18 @@ Gemini leaves this as an empty stub. Claude implements.
 No Claude-owned files. Gemini builds everything. Claude reviews.
 
 ### Phase 4b — Advanced UI
-No Claude-owned files. Gemini builds everything. Claude reviews.
+
+**`ui/` — Retro Terminal Dashboard** ✅ COMPLETE
+Claude built the full UI (Gemini left static mockup with hardcoded data).
+- Vite 5 + React 18 + Tailwind 3 (replaced broken react-scripts)
+- Full black background, maroon/orange CRT terminal aesthetic
+- `Dashboard.jsx` — live VRAM gauge, GPU%, loaded model, task queue stats (2s poll)
+- `Feed.jsx` — task list + WebSocket /ws/events live event stream
+- `Sidebar.jsx` — health check, session uptime, nav
+- `ShadowTerminal.jsx` — interactive terminal: submit/vram/tasks/clear/help
+- `App.jsx` — layout shell with Config routing
+- Vite proxy: /api and /ws → localhost:8000 (no CORS issues)
+- Run: `cd ui && npm install && npm run dev` → http://localhost:3000
 
 ---
 
@@ -99,14 +110,15 @@ Gemini does not create this file. Claude writes it.
 
 ## Summary Table
 
-| File | Phase | Claude Builds |
-|---|---|---|
-| `models/claude.py` | 1 | Full implementation |
-| `_classify_via_cli()` in `core/classifier.py` | 1 | Method only (Gemini builds rest of file) |
-| `mcp/server.py` | 3 | Full implementation |
-| `mcp/registry.py` | 3 | Full implementation |
-| `mcp/security.py` | 3 | Full implementation + adversarial review |
-| `mcp-config.json` | 5 | Full file |
+| File | Phase | Claude Builds | Status |
+|---|---|---|---|
+| `models/claude.py` | 1 | Full implementation | ✅ Done |
+| `_classify_via_cli()` in `core/classifier.py` | 1 | Method only | ✅ Done |
+| `mcp/server.py` | 3 | Full implementation | ✅ Done |
+| `mcp/registry.py` | 3 | Full implementation | ✅ Done |
+| `mcp/security.py` | 3 | Full implementation + adversarial review | ✅ Done |
+| `ui/` (all files) | 4b | Full dashboard (Gemini left static mockup) | ✅ Done |
+| `mcp-config.json` | 5 | Full file | ✅ Done |
 
 **Everything else across all phases → Gemini builds, Claude reviews.**
 
@@ -127,7 +139,7 @@ Gemini does not create this file. Claude writes it.
 - httpx for HTTP client
 - pytest + pytest-asyncio for all tests
 - ruff for linting and formatting
-- React + Tailwind for frontend (Phase 4)
+- Vite 5 + React 18 + Tailwind 3 for frontend (Phase 4) — run via `cd ui && npm run dev`
 
 ## CLI Invocation — Critical
 Claude Code is invoked as a SUBPROCESS, not SDK:
@@ -178,7 +190,13 @@ Run this on every piece of Gemini's output before accepting:
 □ Blueprint gap found → written to docs/ISSUES.md?
 
 ## Current Build State
-Current phase: PHASE 1 — Core Engine (in progress)
+Current phase: PHASE 5 COMPLETE — all phases shipped, CI green
+- Phase 1 ✅ Core Engine (models, classifier, queue, vram, orchestration)
+- Phase 2 ✅ Context + Resilience (compressor wired, idle eviction, pruning)
+- Phase 3 ✅ MCP Layer (server, registry, security)
+- Phase 4a ✅ API (FastAPI routes: tasks, vram, models, stream, health, ws)
+- Phase 4b ✅ Retro terminal dashboard (ui/ — Vite + React + Tailwind)
+- Phase 5 ✅ Distribution (pvx init, pvx-mcp entry point, LICENSE, README, mcp-config.json)
 Update this line every session start.
 
 ## Commands
