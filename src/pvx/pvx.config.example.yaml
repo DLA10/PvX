@@ -1,0 +1,145 @@
+# pvx.config.yaml — PvX Platform Configuration
+#
+# Run `pvx init` to generate this file in your working directory, then
+# run `pvx doctor` to validate your setup before `pvx start`.
+#
+# Model discovery runs at startup: PvX queries `ollama list` and fills in
+# routing rules for any categories not explicitly set below. You only need
+# to configure the sections that differ from auto-discovery.
+
+orchestrator:
+  cli: "claude"
+
+# ---------------------------------------------------------------------------
+# Routing — which model handles which category of task
+#
+# Categories (heaviest → lightest):
+#   large_context, codebase_analysis, architecture, final_review  → always claude
+#   complex_code, ml_pipeline, oop_design, code_review,
+#   algorithm_design, system_design                               → heavy local model
+#   boilerplate, simple_refactor, formatting, docstrings          → light local model
+#   math_proof, chain_of_thought, debugging_logic                 → reasoning model
+#
+# Omit a category and PvX auto-assigns it at startup from discovered models.
+# ---------------------------------------------------------------------------
+routing:
+  rules:
+    # Heavy tasks — set to your largest model that fits in VRAM
+    complex_code:       "qwen2.5-coder:7b-instruct-q4_K_M"
+    algorithm_design:   "qwen2.5-coder:7b-instruct-q4_K_M"
+    code_review:        "qwen2.5-coder:7b-instruct-q4_K_M"
+    ml_pipeline:        "qwen2.5-coder:7b-instruct-q4_K_M"
+    oop_design:         "qwen2.5-coder:7b-instruct-q4_K_M"
+    system_design:      "qwen2.5-coder:7b-instruct-q4_K_M"
+    debugging_logic:    "qwen2.5-coder:7b-instruct-q4_K_M"
+    math_proof:         "qwen2.5-coder:7b-instruct-q4_K_M"
+    chain_of_thought:   "qwen2.5-coder:7b-instruct-q4_K_M"
+    # Light tasks — set to your smallest / fastest model
+    docstrings:         "qwen2.5-coder:3b-instruct-q8_0"
+    boilerplate:        "qwen2.5-coder:3b-instruct-q8_0"
+    formatting:         "qwen2.5-coder:3b-instruct-q8_0"
+    simple_refactor:    "qwen2.5-coder:3b-instruct-q8_0"
+    # Always Claude — these are never sent to local models
+    large_context:      "claude"
+    codebase_analysis:  "claude"
+    architecture:       "claude"
+    final_review:       "claude"
+
+  # Fallback chain: if a model can't load (VRAM pressure), try these in order
+  fallback_chain:
+    "qwen2.5-coder:7b-instruct-q4_K_M": ["claude"]
+    "qwen2.5-coder:3b-instruct-q8_0":   ["qwen2.5-coder:7b-instruct-q4_K_M", "claude"]
+    claude: []
+
+  classifier:
+    fallback: keyword-heuristic
+    min_confidence: 0.6
+
+# ---------------------------------------------------------------------------
+# Models — register installed Ollama models and their VRAM footprint.
+# PvX auto-discovers these from `ollama list` at startup. Add entries here
+# only if auto-discovery produces incorrect VRAM estimates for your hardware.
+# ---------------------------------------------------------------------------
+models:
+  local:
+    - name: "qwen2.5-coder:7b-instruct-q4_K_M"
+      vram_mb: 4800
+      context_tokens: 32000
+      supports_function_calling: true
+    - name: "qwen2.5-coder:3b-instruct-q8_0"
+      vram_mb: 3400
+      context_tokens: 32000
+      supports_function_calling: false
+  claude:
+    context_tokens: 200000
+
+# ---------------------------------------------------------------------------
+# VRAM management
+# ---------------------------------------------------------------------------
+vram:
+  # Keep this many MB free at all times (prevents OOM from KV cache growth)
+  safety_buffer_mb: 512
+  # Seconds a task can run at near-zero GPU utilisation before zombie detection
+  # Raise on slow/memory-bound GPUs where GPU % dips between token batches
+  zombie_timeout_seconds: 60
+  zombie_utilisation_threshold_pct: 2
+  polling_interval_seconds: 2
+  preemption:
+    p5_preempts: [p1, p2, p3]
+    p4_preempts: [p1]
+
+# ---------------------------------------------------------------------------
+# Task queue
+# ---------------------------------------------------------------------------
+queue:
+  default_priority: 3
+  default_max_retries: 3
+  dependency_failure_strategy: fail_cascade
+  # Group up to N tasks for the same model before switching (avoids load/unload churn)
+  affinity_batch_max_tasks: 10
+  affinity_batch_max_seconds: 300
+  # Tasks waiting longer than this bypass priority ordering (starvation guard)
+  starvation_timeout_seconds: 300
+  partial_save_min_tokens: 150
+
+# ---------------------------------------------------------------------------
+# Context compression — uses a small local model to summarise long histories
+# ---------------------------------------------------------------------------
+context:
+  compression_threshold_pct: 70
+  compression_model: "qwen2.5-coder:3b-instruct-q8_0"
+  compression_keep_last_messages: 5
+
+# ---------------------------------------------------------------------------
+# Security
+# ---------------------------------------------------------------------------
+security:
+  sql_blocked_keywords: [DROP, TRUNCATE, DELETE, ALTER, CREATE, GRANT, REVOKE]
+  path_traversal_check: true
+  command_injection_check: true
+
+# ---------------------------------------------------------------------------
+# Optional MCP integrations — set enabled: true and fill credentials to activate
+# ---------------------------------------------------------------------------
+mcp_servers:
+  postgresql:
+    enabled: false
+    connection: "postgresql://user:pass@localhost:5432/db"
+    allowed_operations: ["SELECT", "INSERT", "UPDATE"]
+    blocked_operations: ["DROP", "TRUNCATE", "DELETE", "ALTER", "CREATE"]
+    max_result_rows: 1000
+  discord:
+    enabled: false
+    bot_token: "${DISCORD_BOT_TOKEN}"
+    allowed_channels: ["dev-logs", "ai-feed"]
+  github:
+    enabled: false
+    token: "${GITHUB_TOKEN}"
+    allowed_repos: ["your-org/your-repo"]
+    allowed_operations: ["read", "create_issue", "create_pr"]
+    blocked_operations: ["delete_repo", "add_collaborator"]
+  filesystem:
+    enabled: true
+    allowed_paths: ["./project", "~/workspace"]
+    blocked_paths: ["~/.ssh", "/etc", "~/.aws", "~/.config/pvx"]
+    max_file_size_mb: 10

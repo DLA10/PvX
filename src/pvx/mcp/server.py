@@ -426,10 +426,21 @@ async def run_server() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Standalone entry point
+# Entry points
 # ---------------------------------------------------------------------------
 
-if __name__ == "__main__":
-    import anyio
+def _sync_run() -> None:
+    """
+    Synchronous entry point for the `pvx-mcp` CLI command.
 
+    Claude Code launches this as a subprocess and communicates over stdio.
+    Add to Claude Code's MCP config:
+
+        {"mcpServers": {"pvx": {"command": "pvx-mcp"}}}
+    """
+    import anyio
     anyio.run(run_server)
+
+
+if __name__ == "__main__":
+    _sync_run()

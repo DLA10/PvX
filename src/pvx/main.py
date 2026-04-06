@@ -4,6 +4,7 @@ import sys
 import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, Optional
 
 import ollama
@@ -279,7 +280,10 @@ async def orchestration_loop(state: AppState) -> None:
         except Exception as exc:
             task.status = "failed"
             task.error = str(exc)
-            logger.error("orchestration_error", task_id=task.id, error=str(exc))
+            logger.error("orchestration_error",
+                         task_id=task.id,
+                         error=str(exc),
+                         hint="If this is unexpected, report at https://github.com/DLA10/PvX/issues")
 
         finally:
             if model_name != "claude":
@@ -529,16 +533,62 @@ def doctor() -> None:
         log.info(f"0 errors, {warnings} warnings. Ready to run pvx start.")
 
 
+def init_config() -> None:
+    """
+    Generate a starter pvx.config.yaml in the current working directory.
+
+    Copies the bundled example config (which ships inside the Python package)
+    to ./pvx.config.yaml. The file includes comments explaining every option.
+    Edit it to match your installed Ollama models, then run `pvx doctor`.
+    """
+    dest = Path("pvx.config.yaml")
+    if dest.exists():
+        log.warning("pvx_config_already_exists",
+                    path=str(dest.resolve()),
+                    hint="Delete it first or edit it directly")
+        return
+
+    # The example config is bundled inside the package at install time
+    src = Path(__file__).parent / "pvx.config.example.yaml"
+    if not src.exists():
+        log.error("pvx_example_config_missing",
+                  hint="Reinstall pvx: uv tool install --force pvx")
+        return
+
+    import shutil
+    shutil.copy(src, dest)
+    log.info("pvx_config_created",
+             path=str(dest.resolve()),
+             next_steps=[
+                 "1. Edit pvx.config.yaml — update model names to match `ollama list`",
+                 "2. Run: pvx doctor",
+                 "3. Run: pvx start",
+             ])
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="PvX - Agentic multi-model orchestration platform")
+    parser = argparse.ArgumentParser(
+        description="PvX — hardware-aware AI orchestration platform",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  pvx init       Create pvx.config.yaml in the current directory\n"
+            "  pvx doctor     Check all dependencies and model availability\n"
+            "  pvx start      Start the platform (API on :8000, MCP on stdio)\n\n"
+            "Docs & issues: https://github.com/DLA10/PvX"
+        ),
+    )
     subparsers = parser.add_subparsers(dest="command")
 
-    subparsers.add_parser("doctor", help="Check dependencies")
-    subparsers.add_parser("start", help="Start the PvX platform")
+    subparsers.add_parser("init",   help="Create pvx.config.yaml in the current directory")
+    subparsers.add_parser("doctor", help="Check dependencies and model availability")
+    subparsers.add_parser("start",  help="Start the PvX platform (API + MCP server)")
 
     args = parser.parse_args()
 
-    if args.command == "doctor":
+    if args.command == "init":
+        init_config()
+    elif args.command == "doctor":
         doctor()
     elif args.command == "start":
         start()
