@@ -1,0 +1,98 @@
+orchestrator:
+  cli: "claude"
+
+routing:
+  rules:
+    math_proof: deepseek-r1:7b
+    algorithm_design: deepseek-r1:7b
+    debugging_logic: deepseek-r1:7b
+    chain_of_thought: deepseek-r1:7b
+    ml_pipeline: qwen2.5-coder:14b
+    oop_design: qwen2.5-coder:14b
+    system_design: qwen2.5-coder:14b
+    complex_code: qwen2.5-coder:14b
+    code_review: qwen2.5-coder:14b
+    docstrings: qwen2.5-coder:3b
+    boilerplate: qwen2.5-coder:3b
+    formatting: qwen2.5-coder:3b
+    simple_refactor: qwen2.5-coder:3b
+    large_context: claude
+    codebase_analysis: claude
+    architecture: claude
+    final_review: claude
+  fallback_chain:
+    deepseek-r1:7b: [claude]
+    qwen2.5-coder:14b: [claude]
+    qwen2.5-coder:3b: [qwen2.5-coder:14b, claude]
+    claude: []
+  classifier:
+    fallback: keyword-heuristic
+    min_confidence: 0.6
+
+models:
+  local:
+    - name: qwen2.5-coder:14b
+      vram_mb: 8700
+      context_tokens: 128000
+      supports_function_calling: true
+    - name: deepseek-r1:7b
+      vram_mb: 4500
+      context_tokens: 32000
+      supports_function_calling: true
+    - name: qwen2.5-coder:3b
+      vram_mb: 2000
+      context_tokens: 32000
+      supports_function_calling: false
+  claude:
+    context_tokens: 200000
+
+vram:
+  safety_buffer_mb: 512
+  zombie_timeout_seconds: 60
+  zombie_utilisation_threshold_pct: 2
+  polling_interval_seconds: 2
+  preemption:
+    p5_preempts: [p1, p2, p3]
+    p4_preempts: [p1]
+
+queue:
+  default_priority: 3
+  default_max_retries: 3
+  dependency_failure_strategy: fail_cascade
+  affinity_batch_max_tasks: 10
+  affinity_batch_max_seconds: 300
+  starvation_timeout_seconds: 300
+  partial_save_min_tokens: 150
+
+context:
+  compression_threshold_pct: 70
+  compression_model: qwen2.5-coder:3b
+  compression_keep_last_messages: 5
+
+security:
+  sql_blocked_keywords: [DROP, TRUNCATE, DELETE, ALTER, CREATE, GRANT, REVOKE]
+  path_traversal_check: true
+  command_injection_check: true
+
+mcp_servers:
+  postgresql:
+    enabled: true
+    connection: "postgresql://user:pass@localhost:5432/db"
+    allowed_operations: ["SELECT", "INSERT", "UPDATE"]
+    blocked_operations: ["DROP", "TRUNCATE", "DELETE", "ALTER", "CREATE"]
+    max_result_rows: 1000
+  discord:
+    enabled: false
+    bot_token: "${DISCORD_BOT_TOKEN}"
+    allowed_channels: ["dev-logs", "ai-feed"]
+  github:
+    enabled: false
+    token: "${GITHUB_TOKEN}"
+    allowed_repos: ["your-org/pvx"]
+    allowed_operations: ["read", "create_issue", "create_pr"]
+    blocked_operations: ["delete_repo", "add_collaborator"]
+  filesystem:
+    enabled: true
+    allowed_paths: ["./project", "~/workspace"]
+    blocked_paths: ["~/.ssh", "/etc", "~/.aws", "~/.config/pvx"]
+    max_file_size_mb: 10

@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  pvx:
+    build: .
+    ports:
+      - "8765:8765"
+    volumes:
+      - .:/app
+    environment:
+      - CLAUDE_API_KEY=${CLAUDE_API_KEY}
+    network_mode: "host"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

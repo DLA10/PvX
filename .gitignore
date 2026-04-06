@@ -1,0 +1,24 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# SQLite database
+*.db
+*.db-shm
+*.db-wal
+
+# User config (contains local paths/secrets — use pvx.config.example.yaml)
+pvx.config.yaml
+
+# Windows metadata files
+*.Zone.Identifier
+
+# Stub script (one-time use)
+create_stubs.py
