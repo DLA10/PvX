@@ -1,6 +1,6 @@
 import pynvml
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional
 from datetime import datetime
 from enum import Enum

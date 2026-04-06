@@ -6,7 +6,6 @@ security layer holds under adversarial variation: case mixing, whitespace
 insertion, encoding tricks, and random text that should pass.
 """
 
-import pytest
 from hypothesis import given, settings, strategies as st
 
 from pvx.mcp.security import SecurityLayer

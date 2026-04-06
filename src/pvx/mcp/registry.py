@@ -10,7 +10,7 @@ enabled in AppConfig are registered; everything else is a no-op.
 import asyncio
 import inspect
 import json
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Tuple
 
 import structlog
 

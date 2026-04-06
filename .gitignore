@@ -22,3 +22,11 @@ pvx.config.yaml
 
 # Stub script (one-time use)
 create_stubs.py
+
+# Test artifacts
+.coverage
+.hypothesis/
+
+# UI build artifacts and deps
+ui/node_modules/
+ui/dist/
