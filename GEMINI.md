@@ -91,3 +91,48 @@ uv run ruff check .        Lint code
 2. Check ISSUES.md for known gaps
 3. Ask user before implementing anything not in blueprint
 4. Never invent architecture not in blueprint
+
+---
+## Claude-Owned Files — Do Not Implement
+
+The following files are built by the Claude reviewer, not Gemini. For each one, create the file with an empty class/stub and a comment, then move on. Do not write any logic inside them.
+
+Phase 1
+
+models/claude.py — Leave as:
+class ClaudeCodeModel(BaseModelInterface):
+    """Claude Code subprocess wrapper — implemented by Claude reviewer."""
+    pass
+
+_classify_via_cli() inside core/classifier.py — Build the full TaskClassifier (keyword logic, caching, classify() flow, _classify_keywords()) but leave this one method as:
+def _classify_via_cli(self, prompt: str, keyword_hint: ClassificationResult) -> ClassificationResult:
+    raise NotImplementedError("Implemented by Claude reviewer.")
+
+Phase 2
+
+Nothing to skip. Build everything in Phase 2 fully.
+
+Critical: The blueprint Phase 2 description says "ContextCompressor (CLI-backed)" — this is outdated. The v0.9 spec (Section 7.5) is the authority: ContextCompressor uses Qwen-3B locally via Ollama, not Claude subprocess. Build it with Qwen-3B.
+
+Phase 3
+
+mcp/server.py — Leave as:
+# MCP server — implemented by Claude reviewer.
+
+mcp/registry.py — Leave as:
+# MCP tool registry — implemented by Claude reviewer.
+
+mcp/security.py — Leave as:
+# Security validation layer — implemented by Claude reviewer (adversarial review required).
+
+Build everything else in Phase 3 fully: mcp/proxy.py, mcp/tools/postgres.py, mcp/tools/filesystem.py, mcp/tools/github.py, mcp/tools/discord.py.
+
+Phase 4a and Phase 4b
+
+Nothing to skip. Build everything fully.
+
+Phase 5
+
+mcp-config.json — Do not create this file. Claude writes it.
+
+Build everything else in Phase 5 fully: release.yml, README, Docker Compose updates, PyPI build config.

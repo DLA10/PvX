@@ -7,18 +7,18 @@ Current phase: PHASE 1
 |---|---|---|---|
 | **Phase 0 Foundation** | Gemini | ✅ | Done |
 | **Phase 1: Core Engine** | | | |
-| Task Classifier | Gemini | 🔄 | In Progress |
-| Task Router | Gemini | ⏳ | |
-| Task Dataclass | Gemini | ⏳ | |
-| Task Queue Engine | Gemini | ⏳ | |
-| Affinity Batching | Gemini | ⏳ | |
-| Dependency Resolver | Gemini | ⏳ | |
-| VRAM Manager (Full SM) | Gemini | ⏳ | |
-| Zombie Detection | Gemini | ⏳ | |
-| VRAM Preemption | Gemini | ⏳ | |
-| Circuit Breaker | Gemini | ⏳ | |
-| Event Bus | Gemini | ⏳ | |
-| Conversation Store | Gemini | ⏳ | |
+| Task Classifier | Gemini | ✅ | Done |
+| Task Router | Gemini | ✅ | Done |
+| Task Dataclass | Gemini | ✅ | Done |
+| Task Queue Engine | Gemini | ✅ | Done |
+| Affinity Batching | Gemini | ✅ | Done |
+| Dependency Resolver | Gemini | ✅ | Done |
+| VRAM Manager (Full SM) | Gemini | ✅ | Done |
+| Zombie Detection | Gemini | ✅ | Done |
+| VRAM Preemption | Gemini | ✅ | Done |
+| Circuit Breaker | Gemini | ✅ | Done |
+| Event Bus | Gemini | ✅ | Done |
+| Conversation Store | Gemini | ✅ | Done |
 
 Status codes: ⏳ Pending | 🔄 In Progress | 👁️ In Review | ✅ Done | ❌ Failed
 
