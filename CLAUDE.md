@@ -10,43 +10,105 @@ You are the REVIEWER agent.
 Gemini CLI is the primary BUILD agent (see GEMINI.md for its instructions).
 Your job is to:
 1. Review Gemini's output against the checklist below and fix bugs
-2. Build the 4 components listed in "Claude Builds" below
+2. Build the specific components listed below — these are Claude-only
 3. Update docs/TASK_BOARD.md with review results
 Never commit unreviewed code.
 
-## Claude Builds — These 4 Components Only
+---
 
-### 1. `models/claude.py` — ClaudeCodeModel (Every Phase)
-You know your own CLI. Build this, not Gemini.
+## Claude Builds — Complete List Across All Phases
+
+### Phase 1 — Core Engine
+
+**`models/claude.py` — ClaudeCodeModel**
+You know your own CLI. Gemini leaves this as an empty stub. Claude implements:
 - Subprocess invocation: `claude --print -p "prompt"`
-- ANSI escape code stripping from stdout
+- ANSI escape code stripping from stdout (re.sub r'\x1b\[[0-9;]*[mGKHF]')
 - Rate limit detection via stderr pattern matching:
     "rate_limit_error", "Too many requests", "overloaded_error", "529"
-- Timeout handling (180s), FileNotFoundError handling
-- Circuit breaker integration
-- `is_available()` via `claude --version` check
-Gemini leaves this as a stub shell. Claude implements it fully.
+- Timeout: 180s. Handle FileNotFoundError (CLI not installed).
+- `is_available()` check via `claude --version`
+- circuit_breaker.record_failure() on rate limit hit
+- tokens_used = 0 (--print mode does not expose token count)
 
-### 2. `_classify_via_cli()` in `core/classifier.py` (Phase 1)
-The escalation prompt sent to `claude --print` must be written by Claude.
-Claude knows what prompt structure produces reliable JSON from itself.
-Gemini builds the full TaskClassifier (keyword logic, caching, structure)
-but leaves `_classify_via_cli` as `raise NotImplementedError`.
-Claude fills it in after Gemini's Phase 1 is reviewed.
+**`_classify_via_cli()` in `core/classifier.py`**
+Gemini builds the full TaskClassifier (keyword logic, caching, classify() flow)
+but leaves this one method as `raise NotImplementedError`.
+Claude writes the escalation prompt — Claude knows what prompt structure
+produces reliable JSON from itself (format, constraints, output noise).
 
-### 3. `mcp/server.py` — MCP Server (Phase 3)
+---
+
+### Phase 2 — Context + Resilience
+
+No Claude-owned files in Phase 2.
+Gemini builds everything. Claude reviews.
+
+IMPORTANT note to carry into Phase 2 review:
+The blueprint Phase 2 description says "ContextCompressor (CLI-backed)"
+but Section 7.5 (the authoritative spec) overrides this with Qwen-3B local.
+v0.9 changelog explicitly changed the compressor from Claude to Qwen-3B.
+If Gemini uses Claude subprocess for compression, flag it as a bug.
+
+---
+
+### Phase 3 — MCP Layer
+
+**`mcp/server.py` — MCP Server**
 PvX ships as an MCP server using Anthropic's own `mcp` Python SDK.
 Claude has authoritative knowledge of:
-- Tool registration and schema format
-- stdio transport setup and lifecycle
-- How Claude Code discovers and calls MCP tools
-Gemini does not build this file at all.
+- Tool registration and JSON schema format
+- stdio transport setup and server lifecycle (serve_forever)
+- How Claude Code discovers tools via MCP protocol
+- Correct tool response format
+Gemini leaves this as an empty stub. Claude implements fully.
 
-### 4. `mcp/security.py` — Security Validation Layer (Phase 2)
-The blueprint requires adversarial review of this module before v0.1 ship.
-Local LLMs at Q4 produce creative bypass attempts not covered by naive
-pattern matching. Claude writes and adversarially reviews this module.
-Gemini does not build this file at all.
+**`mcp/registry.py` — MCP Tool Registry**
+Tightly coupled to server.py. Registers which tools are available
+and maps tool names to handler functions.
+Gemini leaves this as an empty stub. Claude implements.
+
+**`mcp/security.py` — Security Validation Layer**
+The blueprint requires adversarial review before v0.1 ship:
+"Local LLMs at Q4 produce creative variations of dangerous inputs
+not covered by naive pattern matching."
+Claude writes AND adversarially reviews this module.
+Patterns needed: SQL injection, path traversal, command injection,
+privilege escalation, hex encoding, UNION injection, CHAR() bypass,
+LD_PRELOAD, chmod widening, curl|sh pipe attacks.
+Gemini leaves this as an empty stub. Claude implements.
+
+---
+
+### Phase 4a — API + Core Web UI
+No Claude-owned files. Gemini builds everything. Claude reviews.
+
+### Phase 4b — Advanced UI
+No Claude-owned files. Gemini builds everything. Claude reviews.
+
+---
+
+### Phase 5 — Distribution + Polish
+
+**`mcp-config.json` — Claude Code MCP Config Entry Point**
+The JSON snippet that users add to Claude Code's config to register PvX
+as an MCP server. Claude knows the exact format Claude Code expects.
+Gemini does not create this file. Claude writes it.
+
+---
+
+## Summary Table
+
+| File | Phase | Claude Builds |
+|---|---|---|
+| `models/claude.py` | 1 | Full implementation |
+| `_classify_via_cli()` in `core/classifier.py` | 1 | Method only (Gemini builds rest of file) |
+| `mcp/server.py` | 3 | Full implementation |
+| `mcp/registry.py` | 3 | Full implementation |
+| `mcp/security.py` | 3 | Full implementation + adversarial review |
+| `mcp-config.json` | 5 | Full file |
+
+**Everything else across all phases → Gemini builds, Claude reviews.**
 
 ---
 
