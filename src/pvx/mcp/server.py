@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import httpx
 import structlog
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -27,18 +28,35 @@ logger: structlog.BoundLogger = structlog.get_logger(__name__)
 
 pvx_server: Server = Server("pvx")
 
+# Base URL of the PvX REST API — same machine, different process.
+_API_BASE = "http://127.0.0.1:8000"
+_TIMEOUT  = 30.0  # seconds
+
+
+def _api(path: str) -> str:
+    return f"{_API_BASE}{path}"
+
+
+def _unavailable(detail: str = "") -> dict[str, Any]:
+    msg = "PvX backend not reachable at localhost:8000 — is `pvx start` running?"
+    if detail:
+        msg += f" ({detail})"
+    return {"error": msg}
+
 
 # ---------------------------------------------------------------------------
-# Handler — wired to live PvX subsystems via app_state
+# Handler — calls PvX REST API over HTTP (separate process from pvx start)
 # ---------------------------------------------------------------------------
 
 
 class PvXMCPHandler:
     """
-    Dispatches MCP tool calls to live PvX subsystems via app_state.
+    Dispatches MCP tool calls to the PvX REST API via HTTP.
 
-    Reads from pvx.main.app_state at call time (not at import time) so the
-    server module can be imported before `pvx start` initialises state.
+    pvx-mcp runs as a stdio subprocess launched by Claude Code.
+    pvx start runs as a separate process serving the REST API on :8000.
+    These two processes do NOT share memory — all communication goes
+    through the HTTP API.
     """
 
     # ------------------------------------------------------------------
@@ -52,139 +70,97 @@ class PvXMCPHandler:
         priority: int = 3,
         category: str | None = None,
     ) -> dict[str, Any]:
-        from pvx.main import app_state  # late import — avoids circular at module load
-        if app_state is None:
-            return {"error": "PvX not started — run `pvx start` first"}
-
-        import uuid
-        from datetime import datetime
-        from pvx.core.tasks import Task
-
-        # Classify the prompt when no category is explicitly provided.
-        # Runs the full keyword → cache → Claude escalation chain.
+        payload: dict[str, Any] = {
+            "prompt": prompt,
+            "priority": max(1, min(5, priority)),
+        }
+        if model:
+            payload["model"] = model
         if category:
-            cat = category
-        else:
-            classification = app_state.classifier.classify(prompt)
-            cat = classification.category
-            logger.debug("mcp_task_classified",
-                         category=cat,
-                         confidence=classification.confidence,
-                         classified_by=classification.classified_by)
+            payload["category"] = category
 
-        task = Task(
-            id=f"task_{uuid.uuid4().hex[:12]}",
-            model=model or "",
-            prompt=prompt,
-            category=cat,
-            status="pending",
-            priority=max(1, min(5, priority)),
-            depends_on=[],
-            requires_vram=True,
-            requires_system_idle=False,
-            retry_count=0,
-            max_retries=3,
-            created_at=datetime.now(),
-        )
-        # Route if model not forced
-        if not model:
-            task.model = app_state.router.route(task)
-
-        app_state.queue.pending_tasks.append(task)
-        logger.info("mcp_submit_task", task_id=task.id, model=task.model,
-                    priority=priority, category=cat)
-        return {"task_id": task.id, "status": "pending", "model": task.model,
-                "category": cat}
+        try:
+            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+                r = await client.post(_api("/api/tasks/"), json=payload)
+                r.raise_for_status()
+                data = r.json()
+                logger.info("mcp_submit_task", task_id=data.get("task_id"),
+                            model=data.get("model"), category=data.get("category"))
+                return data
+        except httpx.ConnectError as exc:
+            return _unavailable(str(exc))
+        except httpx.HTTPStatusError as exc:
+            return {"error": f"API error {exc.response.status_code}",
+                    "detail": exc.response.text}
 
     # ------------------------------------------------------------------
     # get_task_status
     # ------------------------------------------------------------------
 
     async def get_task_status(self, task_id: str) -> dict[str, Any]:
-        from pvx.main import app_state
-        if app_state is None:
-            return {"error": "PvX not started"}
-
-        task = next((t for t in app_state.queue.pending_tasks if t.id == task_id), None)
-        if task is None:
-            return {"error": "task_not_found", "task_id": task_id}
-
-        return {
-            "task_id": task.id,
-            "status": task.status,
-            "model": task.model,
-            "priority": task.priority,
-            "category": task.category,
-            "output": task.output,
-            "error": task.error,
-            "created_at": task.created_at.isoformat(),
-            "started_at": task.started_at.isoformat() if task.started_at else None,
-            "completed_at": task.completed_at.isoformat() if task.completed_at else None,
-        }
+        try:
+            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+                r = await client.get(_api(f"/api/tasks/{task_id}"))
+                if r.status_code == 404:
+                    return {"error": "task_not_found", "task_id": task_id}
+                r.raise_for_status()
+                return r.json()
+        except httpx.ConnectError as exc:
+            return _unavailable(str(exc))
+        except httpx.HTTPStatusError as exc:
+            return {"error": f"API error {exc.response.status_code}",
+                    "detail": exc.response.text}
 
     # ------------------------------------------------------------------
     # list_tasks
     # ------------------------------------------------------------------
 
     async def list_tasks(self) -> dict[str, Any]:
-        from pvx.main import app_state
-        if app_state is None:
-            return {"error": "PvX not started", "tasks": []}
-
-        tasks = [
-            {
-                "task_id": t.id,
-                "status": t.status,
-                "model": t.model,
-                "priority": t.priority,
-                "category": t.category,
-                "created_at": t.created_at.isoformat(),
-            }
-            for t in app_state.queue.pending_tasks
-        ]
-        return {"tasks": tasks, "count": len(tasks)}
+        try:
+            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+                r = await client.get(_api("/api/tasks/"))
+                r.raise_for_status()
+                tasks = r.json()
+                return {"tasks": tasks, "count": len(tasks)}
+        except httpx.ConnectError as exc:
+            return _unavailable(str(exc))
+        except httpx.HTTPStatusError as exc:
+            return {"error": f"API error {exc.response.status_code}",
+                    "detail": exc.response.text}
 
     # ------------------------------------------------------------------
     # get_vram_status
     # ------------------------------------------------------------------
 
     async def get_vram_status(self) -> dict[str, Any]:
-        from pvx.main import app_state
-        if app_state is None:
-            return {"error": "PvX not started"}
-
-        state = app_state.vram.poll()
-        # Include live Ollama ground truth alongside our tracked state
-        actually_loaded = app_state.vram.get_actually_loaded_models()
-        return {
-            "total_mb": state.total_mb,
-            "used_mb": state.used_mb,
-            "free_mb": state.free_mb,
-            "gpu_utilisation_pct": state.gpu_utilisation_pct,
-            "vram_state": app_state.vram.state.value,
-            "loaded_model": app_state.vram.get_loaded_model(),
-            "ollama_loaded_models": actually_loaded,
-        }
+        try:
+            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+                r = await client.get(_api("/api/vram/"))
+                r.raise_for_status()
+                return r.json()
+        except httpx.ConnectError as exc:
+            return _unavailable(str(exc))
+        except httpx.HTTPStatusError as exc:
+            return {"error": f"API error {exc.response.status_code}",
+                    "detail": exc.response.text}
 
     # ------------------------------------------------------------------
     # cancel_task
     # ------------------------------------------------------------------
 
     async def cancel_task(self, task_id: str) -> dict[str, Any]:
-        from pvx.main import app_state
-        if app_state is None:
-            return {"error": "PvX not started"}
-
-        task = next((t for t in app_state.queue.pending_tasks if t.id == task_id), None)
-        if task is None:
-            return {"error": "task_not_found", "task_id": task_id}
-        if task.status in ("done", "failed"):
-            return {"error": f"task_already_{task.status}", "task_id": task_id}
-
-        task.status = "failed"
-        task.error = "CANCELLED_BY_USER"
-        logger.info("mcp_cancel_task", task_id=task_id)
-        return {"task_id": task_id, "status": "cancelled"}
+        try:
+            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+                r = await client.delete(_api(f"/api/tasks/{task_id}"))
+                if r.status_code == 404:
+                    return {"error": "task_not_found", "task_id": task_id}
+                r.raise_for_status()
+                return r.json()
+        except httpx.ConnectError as exc:
+            return _unavailable(str(exc))
+        except httpx.HTTPStatusError as exc:
+            return {"error": f"API error {exc.response.status_code}",
+                    "detail": exc.response.text}
 
 
 # Module-level handler instance shared by both decorators below.
