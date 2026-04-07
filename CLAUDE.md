@@ -16,168 +16,216 @@ Never commit unreviewed code.
 
 ---
 
-## Claude Builds — Complete List Across All Phases
+## Current Build State
+**ALL PHASES COMPLETE. CI green on every commit.**
 
-### Phase 1 — Core Engine
+- Phase 1 ✅ Core Engine (models, classifier, queue, vram, orchestration)
+- Phase 2 ✅ Context + Resilience (Qwen-3B compressor, idle eviction, pruning)
+- Phase 3 ✅ MCP Layer (server, registry, security)
+- Phase 4a ✅ API + Cost Tracker + Direct Chat
+- Phase 4b ✅ Retro terminal dashboard (Vite + React + Tailwind)
+- Phase 5 ✅ Distribution (pvx init, pvx-mcp, LICENSE, README, mcp-config.json)
 
-**`models/claude.py` — ClaudeCodeModel**
-You know your own CLI. Gemini leaves this as an empty stub. Claude implements:
-- Subprocess invocation: `claude --print -p "prompt"`
-- ANSI escape code stripping from stdout (re.sub r'\x1b\[[0-9;]*[mGKHF]')
-- Rate limit detection via stderr pattern matching:
-    "rate_limit_error", "Too many requests", "overloaded_error", "529"
-- Timeout: 180s. Handle FileNotFoundError (CLI not installed).
-- `is_available()` check via `claude --version`
-- circuit_breaker.record_failure() on rate limit hit
-- tokens_used = 0 (--print mode does not expose token count)
+**Last session work (update this each session):**
+- Fixed MCP handler: was importing app_state directly (always None in MCP process).
+  Now calls REST API over HTTP (httpx). File: src/pvx/mcp/server.py
+- Fixed WebSocket: added websockets dependency (uvicorn was spamming warnings)
+- Built Cost Tracker panel: GET /api/stats/session — tokens/model, GPT-4o equiv cost
+- Built Direct Chat panel: POST /api/chat/{model}/stream — SSE streaming to Ollama
+- Built retro terminal dashboard: maroon/orange on black, CRT scanlines, ASCII bars
+- All CI passing. Latest commit: bdb7a92
 
-**`_classify_via_cli()` in `core/classifier.py`**
-Gemini builds the full TaskClassifier (keyword logic, caching, classify() flow)
-but leaves this one method as `raise NotImplementedError`.
-Claude writes the escalation prompt — Claude knows what prompt structure
-produces reliable JSON from itself (format, constraints, output noise).
+**Next session — user wants to:**
+Test the full MCP integration end-to-end:
+1. `pvx start` in Terminal 1
+2. `cd ui && npm run dev` in Terminal 2 → http://localhost:3000
+3. `claude` in Terminal 3 → paste the test prompt below
+4. Watch tasks appear live in the dashboard
 
----
+**Test prompt to give Claude Code (paste in a fresh `claude` session):**
+```
+You have access to a PvX MCP server running at localhost:8000.
+PvX is a local AI orchestration platform that routes tasks to local Ollama models.
 
-### Phase 2 — Context + Resilience
+Your MCP tools: submit_task, get_task_status, list_tasks, get_vram_status, cancel_task
 
-No Claude-owned files in Phase 2.
-Gemini builds everything. Claude reviews.
+TEST PLAN — do all steps in order:
 
-IMPORTANT note to carry into Phase 2 review:
-The blueprint Phase 2 description says "ContextCompressor (CLI-backed)"
-but Section 7.5 (the authoritative spec) overrides this with Qwen-3B local.
-v0.9 changelog explicitly changed the compressor from Claude to Qwen-3B.
-If Gemini uses Claude subprocess for compression, flag it as a bug.
+STEP 1: Call get_vram_status(). Report VRAM available and loaded model.
 
----
+STEP 2: submit_task(prompt="Write a Python dataclass called UserProfile with fields:
+id (UUID), name (str), email (str), created_at (datetime). Include __post_init__
+validation that email contains @. Add a to_dict() method.", priority=3)
+Poll get_task_status every 5s until done. Report output and which model handled it.
 
-### Phase 3 — MCP Layer
+STEP 3: submit_task(prompt="Implement a generic LRU cache in Python using OrderedDict.
+Support get(key), put(key, value), configurable max_size. Type hints + thread safety
+with Lock.", priority=3)
+Poll until done. Report model and output.
 
-**`mcp/server.py` — MCP Server**
-PvX ships as an MCP server using Anthropic's own `mcp` Python SDK.
-Claude has authoritative knowledge of:
-- Tool registration and JSON schema format
-- stdio transport setup and server lifecycle (serve_forever)
-- How Claude Code discovers tools via MCP protocol
-- Correct tool response format
-Gemini leaves this as an empty stub. Claude implements fully.
+STEP 4: submit_task(prompt="Review the architecture of a VRAM-aware task queue that
+dispatches work to local LLMs. What are the top 3 failure modes and resilience
+strategies for each?", priority=4, category="architecture")
+Poll until done. This should route to claude.
 
-**`mcp/registry.py` — MCP Tool Registry**
-Tightly coupled to server.py. Registers which tools are available
-and maps tool names to handler functions.
-Gemini leaves this as an empty stub. Claude implements.
+STEP 5: Call list_tasks(). Report counts and models used.
+STEP 6: Call get_vram_status() again. Report final VRAM state.
 
-**`mcp/security.py` — Security Validation Layer**
-The blueprint requires adversarial review before v0.1 ship:
-"Local LLMs at Q4 produce creative variations of dangerous inputs
-not covered by naive pattern matching."
-Claude writes AND adversarially reviews this module.
-Patterns needed: SQL injection, path traversal, command injection,
-privilege escalation, hex encoding, UNION injection, CHAR() bypass,
-LD_PRELOAD, chmod widening, curl|sh pipe attacks.
-Gemini leaves this as an empty stub. Claude implements.
+Final summary: Did all tools work? Correct routing? Any failures?
+```
 
 ---
 
-### Phase 4a — API + Core Web UI
-No Claude-owned files. Gemini builds everything. Claude reviews.
+## How PvX Works — Architecture Summary
 
-### Phase 4b — Advanced UI
+```
+Claude Code (user's terminal)
+    │  calls MCP tools via stdio
+    ▼
+pvx-mcp (subprocess, stdio transport)
+    │  makes HTTP calls to localhost:8000
+    ▼
+pvx start (FastAPI on :8000)
+    │  task queue + classifier + router
+    ▼
+Ollama (local GPU — qwen2.5-coder:7b or :3b)
+    │  generates output
+    ▼
+result returned to Claude Code via get_task_status()
+```
 
-**`ui/` — Retro Terminal Dashboard** ✅ COMPLETE
-Claude built the full UI (Gemini left static mockup with hardcoded data).
-- Vite 5 + React 18 + Tailwind 3 (replaced broken react-scripts)
-- Full black background, maroon/orange CRT terminal aesthetic
-- `Dashboard.jsx` — live VRAM gauge, GPU%, loaded model, task queue stats (2s poll)
-- `Feed.jsx` — task list + WebSocket /ws/events live event stream
-- `Sidebar.jsx` — health check, session uptime, nav
-- `ShadowTerminal.jsx` — interactive terminal: submit/vram/tasks/clear/help
-- `App.jsx` — layout shell with Config routing
-- Vite proxy: /api and /ws → localhost:8000 (no CORS issues)
-- Run: `cd ui && npm install && npm run dev` → http://localhost:3000
-
----
-
-### Phase 5 — Distribution + Polish
-
-**`mcp-config.json` — Claude Code MCP Config Entry Point**
-The JSON snippet that users add to Claude Code's config to register PvX
-as an MCP server. Claude knows the exact format Claude Code expects.
-Gemini does not create this file. Claude writes it.
+CRITICAL: pvx-mcp and pvx start are SEPARATE PROCESSES.
+MCP handler MUST use httpx HTTP calls — never import app_state.
+src/pvx/mcp/server.py is the authoritative file for this.
 
 ---
 
-## Summary Table
+## API Endpoints (all at localhost:8000)
 
-| File | Phase | Claude Builds | Status |
-|---|---|---|---|
-| `models/claude.py` | 1 | Full implementation | ✅ Done |
-| `_classify_via_cli()` in `core/classifier.py` | 1 | Method only | ✅ Done |
-| `mcp/server.py` | 3 | Full implementation | ✅ Done |
-| `mcp/registry.py` | 3 | Full implementation | ✅ Done |
-| `mcp/security.py` | 3 | Full implementation + adversarial review | ✅ Done |
-| `ui/` (all files) | 4b | Full dashboard (Gemini left static mockup) | ✅ Done |
-| `mcp-config.json` | 5 | Full file | ✅ Done |
+| Endpoint | Method | Purpose |
+|---|---|---|
+| /api/health | GET | Health + pvx_ready flag |
+| /api/vram/ | GET | VRAM state, loaded model, GPU% |
+| /api/tasks/ | GET | List all tasks |
+| /api/tasks/ | POST | Submit task {prompt, priority, model, category} |
+| /api/tasks/{id} | GET | Task detail + output |
+| /api/tasks/{id} | DELETE | Cancel task |
+| /api/tasks/{id}/stream | GET | SSE streaming output |
+| /api/tasks/analyze | POST | Dry-run: classify + route without queuing |
+| /api/models/ | GET | List models |
+| /api/models/load | POST | Load model into VRAM |
+| /api/models/unload | POST | Unload model from VRAM |
+| /api/stats/session | GET | Tokens/model, GPT-4o equiv cost, compressions |
+| /api/chat/models | GET | Available Ollama models for direct chat |
+| /api/chat/{model}/stream | POST | SSE direct chat (bypasses queue) |
+| /ws/events | WebSocket | Live event stream for dashboard |
 
-**Everything else across all phases → Gemini builds, Claude reviews.**
+## MCP Tools (exposed to Claude Code)
+
+| Tool | What it does |
+|---|---|
+| submit_task(prompt, priority, model, category) | Queue a task, returns task_id |
+| get_task_status(task_id) | Poll status + output |
+| list_tasks() | All tasks snapshot |
+| get_vram_status() | GPU VRAM + loaded model |
+| cancel_task(task_id) | Cancel queued task |
+
+## Dashboard (ui/)
+
+Run: `cd ui && npm run dev` → http://localhost:3000
+Panels:
+- DASHBOARD (right sidebar) — live VRAM bar, GPU%, task queue counts, tokens, batch status
+- FEED (centre) — TASKS view (2s poll) + EVENTS view (WebSocket /ws/events)
+- DIRECT CHAT — SSE streaming chat direct to Ollama model
+- COST — session token counts, GPT-4o equivalent cost, savings %
+- CONFIG — read-only config reference
+- SHADOW TERMINAL — type `submit <prompt>`, `vram`, `tasks`, `help`
+
+Retro terminal aesthetic: pure black #000000, maroon borders, orange glow text,
+ASCII █░ progress bars, CRT scanlines overlay.
+
+---
+
+## Known Bugs Fixed This Session
+
+| Bug | Fix |
+|---|---|
+| MCP tools returned "PvX not started" always | Handler now calls REST API via httpx instead of importing app_state |
+| WebSocket spam: "No supported WebSocket library" | Added `websockets` dependency |
+| classifier never called on task submit | Wired in tasks.py POST handler |
+| pkill -f ollama killed the server | Replaced with keep_alive=0 API call |
+| task.model split-brain | task.model updated after router.route() |
+| GENERAL_CATEGORIES never routed | Fixed in model_discovery.py |
+| ContextCompressor never called | Wired into orchestration loop |
+| Streaming buffer never freed | release_streaming_buffer() in finally block |
+| No idle VRAM eviction | 120s idle → unload_model() |
+| No task pruning | prune_completed_tasks() every 30s |
+| Zombie false positives | 5-poll hysteresis before kill |
+| react-scripts broken (UI) | Replaced with Vite 5 |
+
+---
+
+## Claude Builds — Complete List
+
+| File | Phase | Status |
+|---|---|---|
+| `models/claude.py` | 1 | ✅ Done |
+| `_classify_via_cli()` in `core/classifier.py` | 1 | ✅ Done |
+| `mcp/server.py` | 3 | ✅ Done (HTTP fix applied) |
+| `mcp/registry.py` | 3 | ✅ Done |
+| `mcp/security.py` | 3 | ✅ Done |
+| `ui/` (all files) | 4b | ✅ Done |
+| `src/pvx/api/routes/stats.py` | 4a | ✅ Done |
+| `src/pvx/api/routes/chat.py` | 4a | ✅ Done |
+| `mcp-config.json` | 5 | ✅ Done |
 
 ---
 
 ## Tech Stack — Use These Only
 - Python 3.11+
 - uv for all package management (never pip directly)
-- FastAPI + uvicorn for web server
+- FastAPI + uvicorn + websockets for web server
 - SQLModel + aiosqlite for database
 - ollama-python for Ollama client
 - nvidia-ml-py (primary, imports as pynvml) + nvidia-smi (fallback) for VRAM
 - mcp (Anthropic) for MCP server implementation
-- anthropic for any direct API calls
+- httpx for HTTP client (including MCP→API calls)
 - structlog for ALL logging (never use print())
 - Pydantic v2 for all data models and config validation
 - tiktoken for token counting
-- httpx for HTTP client
 - pytest + pytest-asyncio for all tests
 - ruff for linting and formatting
-- Vite 5 + React 18 + Tailwind 3 for frontend (Phase 4) — run via `cd ui && npm run dev`
-
-## CLI Invocation — Critical
-Claude Code is invoked as a SUBPROCESS, not SDK:
-  claude --print -p "prompt"
-
-## Claude Code's Role In Classification
-Claude Code acts as the primary classifier.
-If Claude Code is unavailable, the system falls back to keyword-based classification.
-This is handled automatically by TaskClassifier.
+- Vite 5 + React 18 + Tailwind 3 for frontend — `cd ui && npm run dev`
 
 ## Architectural Rules — Never Violate
 1. nvmlInit() called ONCE in VRAMManager.__init__()
-   Cached as self._nvml_handle
-   nvmlShutdown() called ONCE in shutdown()
    NEVER call nvmlInit() inside poll()
 
-2. SQLite WAL mode on EVERY connection, no exceptions:
-   PRAGMA journal_mode=WAL;
-   PRAGMA synchronous=NORMAL;
+2. SQLite WAL mode on EVERY connection:
+   PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;
 
-3. ALWAYS use .total_seconds() on timedelta objects
-   NEVER use .seconds — only returns seconds component
-   A 6min 30s timedelta: .seconds=30, .total_seconds()=390
+3. ALWAYS use .total_seconds() on timedelta — NEVER .seconds
 
-4. ALWAYS use Path.is_relative_to() for path validation
-   NEVER use str.startswith() — has bypass vectors
+4. ALWAYS use Path.is_relative_to() — NEVER str.startswith()
 
-5. JSON extraction uses balanced brace parser
-   NEVER use r'\{[^{}]+\}' — fails on nested objects
+5. JSON extraction uses balanced brace parser — NEVER r'\{[^{}]+\}'
 
-6. Keyword fallback uses KEYWORD_PRIORITY list order
-   First match wins — no arbitrary tie-breaking
+6. MCP server calls REST API via httpx — NEVER imports app_state
 
-7. All writes to SQLite go through async write queue
-   Never write directly to SQLite from multiple coroutines
+7. All SQLite writes go through async write queue
+
+## Commands
+uv run pytest              Run all tests (77 passing)
+pvx start                  Start the platform (port 8000)
+pvx doctor                 Check dependencies + GPU
+pvx init                   Create pvx.config.yaml in CWD
+pvx-mcp                    Start MCP server (Claude Code launches this)
+cd ui && npm run dev       Start dashboard (port 3000)
+uv run ruff check .        Lint
+uv run ruff format .       Format
+gh run list --limit 5      Check CI status
 
 ## Review Checklist
-Run this on every piece of Gemini's output before accepting:
 □ Matches blueprint specification exactly?
 □ Tests written and passing?
 □ No unapproved dependencies?
@@ -187,24 +235,7 @@ Run this on every piece of Gemini's output before accepting:
 □ nvmlInit() only in __init__()?
 □ structlog only — never print()?
 □ Type hints on all functions?
-□ Blueprint gap found → written to docs/ISSUES.md?
-
-## Current Build State
-Current phase: PHASE 5 COMPLETE — all phases shipped, CI green
-- Phase 1 ✅ Core Engine (models, classifier, queue, vram, orchestration)
-- Phase 2 ✅ Context + Resilience (compressor wired, idle eviction, pruning)
-- Phase 3 ✅ MCP Layer (server, registry, security)
-- Phase 4a ✅ API (FastAPI routes: tasks, vram, models, stream, health, ws)
-- Phase 4b ✅ Retro terminal dashboard (ui/ — Vite + React + Tailwind)
-- Phase 5 ✅ Distribution (pvx init, pvx-mcp entry point, LICENSE, README, mcp-config.json)
-Update this line every session start.
-
-## Commands
-uv run pytest              Run all tests
-uv run pvx start           Start the platform
-uv add <package>           Add dependency
-uv run ruff format .       Format code
-uv run ruff check .        Lint code
+□ MCP handler uses httpx — never app_state import?
 
 ## When Unsure
 1. Check blueprint first — docs/PvX_Blueprint_v0.9.md
