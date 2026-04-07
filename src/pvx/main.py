@@ -59,6 +59,9 @@ class AppState:
     # Zombie confirmation counters — zombie fires only after N consecutive
     # low-utilisation polls to prevent false positives on slow/memory-bound GPUs
     _zombie_confirm_counts: Dict[str, int] = field(default_factory=dict)
+    # Session-level telemetry for cost tracker
+    session_token_counts: Dict[str, int] = field(default_factory=dict)
+    session_compressions: int = 0
 
 
 # Module-level singleton — None until `start()` initialises the platform.
@@ -248,7 +251,10 @@ async def orchestration_loop(state: AppState) -> None:
             # For Claude tasks this is free (no VRAM conflict).
             # For Ollama tasks the compressor's can_load() check prevents it from
             # running if insufficient VRAM is available — it skips gracefully.
+            pre_compress_len = len(history)
             history = state.compressor.maybe_compress(model_name, history)
+            if len(history) < pre_compress_len:
+                state.session_compressions += 1
 
             # 6. Generate
             result = model.generate(
@@ -270,6 +276,10 @@ async def orchestration_loop(state: AppState) -> None:
                 state._last_task_completed_at = task.completed_at
                 # Store output so dependent tasks can use it as history
                 state.task_outputs[task.id] = result.content
+                # Accumulate per-model token counts for cost tracker
+                state.session_token_counts[model_name] = (
+                    state.session_token_counts.get(model_name, 0) + result.tokens_used
+                )
                 event_bus.emit("TASK_COMPLETED", {
                     "task_id": task.id,
                     "model": model_name,

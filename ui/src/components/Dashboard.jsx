@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import axios from 'axios'
 
+const fmtTokens = (n) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
+
 // ─── ASCII progress bar ───────────────────────────────────────────────────────
 const BAR_WIDTH = 18
 const asciiBar = (pct, width = BAR_WIDTH) => {
@@ -60,18 +62,21 @@ const SectionHeader = ({ children }) => (
 const Dashboard = () => {
   const [vram,    setVram]    = useState(null)
   const [tasks,   setTasks]   = useState([])
+  const [stats,   setStats]   = useState(null)
   const [online,  setOnline]  = useState(false)
-  const [tick,    setTick]    = useState(0)    // wall-clock second counter
+  const [tick,    setTick]    = useState(0)
   const [updated, setUpdated] = useState(null)
 
   const fetchData = useCallback(async () => {
     try {
-      const [vr, tr] = await Promise.all([
+      const [vr, tr, sr] = await Promise.all([
         axios.get('/api/vram/'),
         axios.get('/api/tasks/'),
+        axios.get('/api/stats/session'),
       ])
       setVram(vr.data)
       setTasks(tr.data)
+      setStats(sr.data)
       setOnline(true)
       setUpdated(new Date())
     } catch {
@@ -240,6 +245,45 @@ const Dashboard = () => {
           </div>
         )}
       </div>
+
+      {/* ── Tokens per model ─────────────────────────────────────────────────── */}
+      {stats && Object.keys(stats.tokens_per_model).length > 0 && (
+        <div className="panel px-3 py-3">
+          <SectionHeader>▸ TOKENS THIS SESSION</SectionHeader>
+          <div className="space-y-1">
+            {Object.entries(stats.tokens_per_model).map(([model, toks]) => (
+              <div key={model} className="flex justify-between text-xs">
+                <span className="text-t-or-dim truncate mr-2">
+                  {model.replace(/:latest$/, '')}
+                </span>
+                <span className="text-t-orange shrink-0">{fmtTokens(toks)}</span>
+              </div>
+            ))}
+          </div>
+          <div className="border-t border-t-border mt-2 pt-2">
+            <StatRow
+              label="TOTAL"
+              value={fmtTokens(stats.total_tokens)}
+              colour="text-t-or-mid"
+            />
+            <StatRow
+              label="COMPRESSIONS"
+              value={stats.compressions}
+              colour={stats.compressions > 0 ? 'text-t-amber' : 'text-t-or-dim'}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* ── Affinity batch status ─────────────────────────────────────────────── */}
+      {stats && (
+        <div className="panel px-3 py-2">
+          <div className="text-xs text-t-or-dim tracking-widest mb-1">▸ BATCH</div>
+          <div className="text-xs text-t-or-mid leading-relaxed italic">
+            {stats.affinity_batch_status}
+          </div>
+        </div>
+      )}
 
       {/* ── Last update ──────────────────────────────────────────────────────── */}
       <div className="panel px-3 py-2 text-xs text-t-or-dim flex justify-between">

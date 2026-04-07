@@ -4,6 +4,8 @@ import axios from 'axios'
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'DASHBOARD' },
   { id: 'tasks',     label: 'TASKS'     },
+  { id: 'chat',      label: 'DIRECT CHAT'},
+  { id: 'cost',      label: 'COST'      },
   { id: 'models',    label: 'MODELS'    },
   { id: 'config',    label: 'CONFIG'    },
 ]

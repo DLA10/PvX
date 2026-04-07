@@ -3,6 +3,8 @@ import Sidebar from './components/Sidebar'
 import Feed from './components/Feed'
 import Dashboard from './components/Dashboard'
 import Config from './components/Config'
+import CostTracker from './components/CostTracker'
+import DirectChat from './components/DirectChat'
 import ShadowTerminal from './components/ShadowTerminal'
 
 const App = () => {
@@ -38,18 +40,18 @@ const App = () => {
         <main className="flex-1 overflow-hidden flex gap-0 pb-40">
 
           {activeNav === 'config' ? (
-            /* Config full-width */
-            <div className="flex-1 overflow-y-auto">
-              <Config />
-            </div>
+            <div className="flex-1 overflow-y-auto"><Config /></div>
+          ) : activeNav === 'cost' ? (
+            <div className="flex-1 overflow-y-auto"><CostTracker /></div>
+          ) : activeNav === 'chat' ? (
+            <div className="flex-1 overflow-hidden flex flex-col"><DirectChat /></div>
           ) : (
             <>
               {/* Feed — takes 2/3 */}
               <div className="flex-1 border-r border-t-border overflow-hidden flex flex-col">
                 <Feed />
               </div>
-
-              {/* Dashboard sidebar — fixed width */}
+              {/* Dashboard sidebar */}
               <div className="w-72 shrink-0 overflow-y-auto p-3">
                 <Dashboard />
               </div>

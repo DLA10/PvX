@@ -7,6 +7,8 @@ from pvx.api.routes.vram import router as vram_router
 from pvx.api.routes.tasks import router as tasks_router
 from pvx.api.routes.models import router as models_router
 from pvx.api.routes.stream import router as stream_router
+from pvx.api.routes.stats import router as stats_router
+from pvx.api.routes.chat import router as chat_router
 
 app = FastAPI(title="PvX Platform API", version="0.1.0")
 
@@ -16,6 +18,8 @@ app.include_router(models_router)
 # SSE streaming must be included AFTER tasks_router — both use /api/tasks prefix
 # and FastAPI resolves routes in registration order.
 app.include_router(stream_router)
+app.include_router(stats_router)
+app.include_router(chat_router)
 
 app.add_middleware(
     CORSMiddleware,
