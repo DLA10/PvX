@@ -72,16 +72,34 @@ class VRAMManager:
         return self._poll_nvidia_smi()
 
     def _poll_pynvml(self) -> VRAMState:
-        mem = pynvml.nvmlDeviceGetMemoryInfo(self._nvml_handle)
-        util = pynvml.nvmlDeviceGetUtilizationRates(self._nvml_handle)
-        procs = pynvml.nvmlDeviceGetComputeRunningProcesses(self._nvml_handle)
+        try:
+            mem = pynvml.nvmlDeviceGetMemoryInfo(self._nvml_handle)
+        except pynvml.NVMLError as exc:
+            # Memory query failed entirely — fall back to nvidia-smi
+            logger.warning("nvml_memory_query_failed", error=str(exc))
+            return self._poll_nvidia_smi()
+
+        # GPU utilisation is not supported on all drivers/GPUs (e.g. WSL2 passthrough).
+        # NVMLError_Unknown is common here — treat it as 0% rather than crashing.
+        try:
+            util = pynvml.nvmlDeviceGetUtilizationRates(self._nvml_handle)
+            gpu_pct: int = util.gpu
+        except pynvml.NVMLError as exc:
+            logger.debug("nvml_util_unsupported", error=str(exc))
+            gpu_pct = 0
+
+        try:
+            procs = pynvml.nvmlDeviceGetComputeRunningProcesses(self._nvml_handle)
+            pids = [p.pid for p in procs]
+        except pynvml.NVMLError:
+            pids = []
 
         return VRAMState(
             total_mb=mem.total // 1024 // 1024,
             used_mb=mem.used // 1024 // 1024,
             free_mb=mem.free // 1024 // 1024,
-            gpu_utilisation_pct=util.gpu,
-            running_pids=[p.pid for p in procs],
+            gpu_utilisation_pct=gpu_pct,
+            running_pids=pids,
         )
 
     def _poll_nvidia_smi(self) -> VRAMState:
@@ -112,7 +130,12 @@ class VRAMManager:
             logger.warning("vram_unknown_model", model=model)
             return False
 
-        state = self.poll()
+        try:
+            state = self.poll()
+        except Exception as exc:
+            # Poll failed entirely — conservatively deny to avoid OOM.
+            logger.warning("vram_poll_failed_in_can_load", model=model, error=str(exc))
+            return False
         required = self.MODEL_VRAM_MB[model]
 
         # Check PRESSURE state: free VRAM below safety buffer even without this model
