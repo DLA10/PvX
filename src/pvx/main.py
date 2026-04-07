@@ -401,6 +401,18 @@ async def _start_async() -> None:
         ollama_models={},
     )
 
+    # Store discovery metadata so /api/models/available can return rich model info
+    # (capability, tier, suggested_for) without re-running discovery on every request.
+    app_state._discovery_meta = {
+        m.name: {
+            "capability": m.capability,
+            "tier": m.tier,
+            "size_gb": m.size_gb,
+            "suggested_for": m.assigned_categories,
+        }
+        for m in discovery.models
+    }
+
     logger.info("pvx_started", api_url="http://localhost:8000", mcp="stdio")
 
     await asyncio.gather(

@@ -145,6 +145,22 @@ class PvXMCPHandler:
                     "detail": exc.response.text}
 
     # ------------------------------------------------------------------
+    # list_available_models
+    # ------------------------------------------------------------------
+
+    async def list_available_models(self) -> dict[str, Any]:
+        try:
+            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+                r = await client.get(_api("/api/models/available"))
+                r.raise_for_status()
+                return r.json()
+        except httpx.ConnectError as exc:
+            return _unavailable(str(exc))
+        except httpx.HTTPStatusError as exc:
+            return {"error": f"API error {exc.response.status_code}",
+                    "detail": exc.response.text}
+
+    # ------------------------------------------------------------------
     # cancel_task
     # ------------------------------------------------------------------
 
@@ -291,6 +307,27 @@ async def list_tools() -> list[types.Tool]:
                 "required": ["task_id"],
             },
         ),
+        types.Tool(
+            name="list_available_models",
+            description=(
+                "Discover all models available on this machine and hand the routing keys to Claude Code.\n\n"
+                "Call this at the START of every session. It returns:\n"
+                "- Every installed Ollama model with VRAM requirements, capability description, "
+                "  whether it can load right now, and suggested task categories\n"
+                "- Claude's own capabilities and suggested use cases\n"
+                "- GPU summary (total/used/free VRAM, GPU%)\n"
+                "- Hardware constraint (one Ollama model in VRAM at a time)\n\n"
+                "After calling this, discuss the available models with the user, agree on a "
+                "routing plan (which model handles which task types), then use explicit model= "
+                "parameters in submit_task() calls rather than relying on PvX auto-routing. "
+                "PvX auto-routing is a fallback only — YOU are the decision maker."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        ),
     ]
 
 
@@ -342,11 +379,15 @@ async def call_tool(
                 task_id=arguments["task_id"],
             )
 
+        elif name == "list_available_models":
+            result = await _handler.list_available_models()
+
         else:
             log.warning("unknown tool requested", tool=name)
             result = {
                 "error": f"Unknown tool: '{name}'",
                 "available_tools": [
+                    "list_available_models",
                     "submit_task",
                     "get_task_status",
                     "list_tasks",

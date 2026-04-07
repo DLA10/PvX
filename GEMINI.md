@@ -98,15 +98,32 @@ Otherwise Claude Code runs the old binary from ~/.local/bin/pvx-mcp.
 
 ---
 
+## Routing Philosophy — CRITICAL ARCHITECTURAL DECISION
+
+PvX does NOT auto-route by default. Claude Code is the decision maker.
+
+The correct workflow:
+1. Claude Code calls list_available_models() at session start
+2. Claude Code shows the user what's installed and what the GPU can handle
+3. Claude Code and user agree on a routing plan collaboratively
+4. Claude Code uses explicit model= params in submit_task() calls
+
+PvX auto-routing (keyword classifier → Claude escalation) is a FALLBACK ONLY,
+invoked when model= is omitted. It is not the primary path.
+
+This is the fundamental design: PvX discovers models and provides access ("hands the keys"),
+Claude Code and the user decide routing strategy, PvX executes.
+
 ## What the User Is Doing Right Now
 
-Testing the full MCP integration:
+Testing the full MCP integration with the new routing workflow:
 1. `pvx start` — backend on :8000
 2. `cd ui && npm run dev` — dashboard on :3000
-3. `claude` (new session) — Claude Code tests PvX MCP tools
+3. `claude` (new session) — Claude Code calls list_available_models() first,
+   agrees routing plan with user, then submits tasks with explicit model= params
 
-The test exercises: get_vram_status → submit boilerplate task → submit complex task →
-submit architecture task (should stay with Claude) → list_tasks → final vram check.
+The new test flow: list_available_models → discuss routing → submit tasks with explicit
+model= → watch tasks in dashboard → verify correct models were used.
 
 If something breaks, the most likely causes are:
 - Stale pvx-mcp binary (fix: `uv tool install --editable . --force`)

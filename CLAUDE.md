@@ -27,51 +27,64 @@ Never commit unreviewed code.
 - Phase 5 ✅ Distribution (pvx init, pvx-mcp, LICENSE, README, mcp-config.json)
 
 **Last session work (update this each session):**
-- Fixed MCP handler: was importing app_state directly (always None in MCP process).
-  Now calls REST API over HTTP (httpx). File: src/pvx/mcp/server.py
-- Fixed WebSocket: added websockets dependency (uvicorn was spamming warnings)
-- Built Cost Tracker panel: GET /api/stats/session — tokens/model, GPT-4o equiv cost
-- Built Direct Chat panel: POST /api/chat/{model}/stream — SSE streaming to Ollama
-- Built retro terminal dashboard: maroon/orange on black, CRT scanlines, ASCII bars
-- All CI passing. Latest commit: bdb7a92
+- ARCHITECTURAL FIX: PvX no longer auto-routes by default. Claude Code is the decision maker.
+- Added list_available_models() MCP tool — returns rich model catalogue with capability,
+  tier, VRAM requirements, can_load_now, suggested_for, plus GPU summary and constraint.
+- Added GET /api/models/available REST endpoint backing the MCP tool.
+- Stored discovery metadata on AppState._discovery_meta so capability/tier data is available
+  to the endpoint without re-running discovery on every request.
+- Updated test prompt: now instructs Claude Code to call list_available_models() first,
+  discuss routing with user, then use explicit model= params in submit_task().
+- All CI passing. Latest commit: 15bab83 (retro dashboard) + pending push.
 
-**Next session — user wants to:**
-Test the full MCP integration end-to-end:
-1. `pvx start` in Terminal 1
+**Next session — how to run PvX:**
+1. `pvx start` in Terminal 1 (FastAPI on :8000)
 2. `cd ui && npm run dev` in Terminal 2 → http://localhost:3000
 3. `claude` in Terminal 3 → paste the test prompt below
 4. Watch tasks appear live in the dashboard
 
 **Test prompt to give Claude Code (paste in a fresh `claude` session):**
 ```
-You have access to a PvX MCP server running at localhost:8000.
-PvX is a local AI orchestration platform that routes tasks to local Ollama models.
+You have access to a PvX MCP server. PvX is a local AI orchestration platform
+that gives you direct access to locally installed Ollama models running on this machine's GPU.
 
-Your MCP tools: submit_task, get_task_status, list_tasks, get_vram_status, cancel_task
+Your MCP tools: list_available_models, submit_task, get_task_status, list_tasks,
+               get_vram_status, cancel_task
+
+IMPORTANT ROUTING PHILOSOPHY:
+- PvX does NOT auto-route. YOU are the decision maker.
+- Call list_available_models() first to see what's installed and what the GPU can handle.
+- Discuss with me (the user) which model to use for which tasks.
+- Then use explicit model= params when calling submit_task().
+- Only use category= without model= as a last resort (fallback auto-routing).
 
 TEST PLAN — do all steps in order:
 
-STEP 1: Call get_vram_status(). Report VRAM available and loaded model.
+STEP 1: Call list_available_models(). Show me all available models, their capabilities,
+VRAM requirements, and whether they can load right now. Then suggest a routing plan
+based on what you see. Ask me to confirm before proceeding.
 
-STEP 2: submit_task(prompt="Write a Python dataclass called UserProfile with fields:
-id (UUID), name (str), email (str), created_at (datetime). Include __post_init__
-validation that email contains @. Add a to_dict() method.", priority=3)
-Poll get_task_status every 5s until done. Report output and which model handled it.
+STEP 2: After I confirm the plan, submit_task() for a boilerplate task using the
+lightest suitable model:
+prompt="Write a Python dataclass called UserProfile with fields: id (UUID), name (str),
+email (str), created_at (datetime). Include __post_init__ validation that email contains @.
+Add a to_dict() method."
+Use explicit model= from step 1's agreed plan.
+Poll get_task_status every 5s until done. Show me the output.
 
-STEP 3: submit_task(prompt="Implement a generic LRU cache in Python using OrderedDict.
-Support get(key), put(key, value), configurable max_size. Type hints + thread safety
-with Lock.", priority=3)
-Poll until done. Report model and output.
+STEP 3: submit_task() for a complex code task using the most capable local model:
+prompt="Implement a generic LRU cache in Python using OrderedDict. Support get(key),
+put(key, value), configurable max_size. Type hints + thread safety with Lock."
+Poll until done. Show me the output.
 
-STEP 4: submit_task(prompt="Review the architecture of a VRAM-aware task queue that
-dispatches work to local LLMs. What are the top 3 failure modes and resilience
-strategies for each?", priority=4, category="architecture")
-Poll until done. This should route to claude.
+STEP 4: For architecture/large-context tasks, you handle it yourself (don't queue).
+Tell me the top 3 failure modes of a VRAM-aware task queue that dispatches work to
+local LLMs, and resilience strategies for each. Answer this yourself.
 
-STEP 5: Call list_tasks(). Report counts and models used.
+STEP 5: Call list_tasks(). Report counts and which models were used.
 STEP 6: Call get_vram_status() again. Report final VRAM state.
 
-Final summary: Did all tools work? Correct routing? Any failures?
+Final summary: Were all tools accessible? Did routing match our agreed plan? Any issues?
 ```
 
 ---
@@ -80,15 +93,17 @@ Final summary: Did all tools work? Correct routing? Any failures?
 
 ```
 Claude Code (user's terminal)
-    │  calls MCP tools via stdio
+    │  calls list_available_models() → sees all local models + capabilities
+    │  discusses with user → agrees on routing plan
+    │  calls submit_task(prompt=..., model="qwen2.5-coder:14b") explicitly
     ▼
 pvx-mcp (subprocess, stdio transport)
     │  makes HTTP calls to localhost:8000
     ▼
 pvx start (FastAPI on :8000)
-    │  task queue + classifier + router
+    │  task queue, VRAM management, streaming
     ▼
-Ollama (local GPU — qwen2.5-coder:7b or :3b)
+Ollama (local GPU) or Claude itself
     │  generates output
     ▼
 result returned to Claude Code via get_task_status()
@@ -97,6 +112,25 @@ result returned to Claude Code via get_task_status()
 CRITICAL: pvx-mcp and pvx start are SEPARATE PROCESSES.
 MCP handler MUST use httpx HTTP calls — never import app_state.
 src/pvx/mcp/server.py is the authoritative file for this.
+
+## Routing Philosophy — Claude Code Is The Decision Maker
+
+PvX does NOT auto-route by default. Claude Code drives routing.
+
+**Correct workflow:**
+1. At session start: call `list_available_models()` — see all installed Ollama models,
+   their capabilities, VRAM requirements, GPU availability
+2. Show the user what's available. Discuss which models to use for which tasks.
+3. Agree on a routing plan with the user (e.g. "qwen2.5-coder:14b for complex code,
+   qwen2.5-coder:3b for boilerplate, I'll keep architecture tasks for myself")
+4. Use explicit `model=` parameter in all `submit_task()` calls
+
+**PvX auto-routing** (keyword classifier → Claude escalation) is a **fallback only**,
+invoked when `model=` is omitted. It should rarely be needed when Claude Code is active.
+
+**Why this matters:** Each user has different models installed. PvX discovers them at
+startup and hands the keys to Claude Code. Claude Code and the user collaborate on
+strategy. PvX is the executor, not the decision maker.
 
 ---
 
@@ -113,6 +147,7 @@ src/pvx/mcp/server.py is the authoritative file for this.
 | /api/tasks/{id}/stream | GET | SSE streaming output |
 | /api/tasks/analyze | POST | Dry-run: classify + route without queuing |
 | /api/models/ | GET | List models |
+| /api/models/available | GET | Rich model catalogue (capability, VRAM, can_load_now) |
 | /api/models/load | POST | Load model into VRAM |
 | /api/models/unload | POST | Unload model from VRAM |
 | /api/stats/session | GET | Tokens/model, GPT-4o equiv cost, compressions |
@@ -124,6 +159,7 @@ src/pvx/mcp/server.py is the authoritative file for this.
 
 | Tool | What it does |
 |---|---|
+| **list_available_models()** | **Call first. Returns all installed models + capabilities + GPU state** |
 | submit_task(prompt, priority, model, category) | Queue a task, returns task_id |
 | get_task_status(task_id) | Poll status + output |
 | list_tasks() | All tasks snapshot |
