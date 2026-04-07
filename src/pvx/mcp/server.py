@@ -195,10 +195,13 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="submit_task",
             description=(
-                "Submit a new task to the PvX orchestration queue. "
-                "PvX classifies the prompt automatically and routes the task to the "
-                "most appropriate model (local via Ollama or Claude Code) based on "
-                "VRAM availability and task category. Returns a task_id for polling."
+                "Submit a task to the PvX execution queue.\n\n"
+                "YOU decide which model to use — call list_available_models() first, "
+                "discuss with the user, then pass the agreed model name here. "
+                "PvX executes the task and manages VRAM (loading/unloading the model, "
+                "batching same-model tasks, zombie detection). Returns a task_id for polling.\n\n"
+                "Use model='claude' to run a task through Claude Code's own subprocess.\n"
+                "Use the Ollama model name (e.g. 'qwen2.5-coder:14b') for local GPU inference."
             ),
             inputSchema={
                 "type": "object",
@@ -208,11 +211,11 @@ async def list_tools() -> list[types.Tool]:
                         "description": "The full prompt / instruction for the task.",
                     },
                     "model": {
-                        "type": ["string", "null"],
-                        "default": None,
+                        "type": "string",
                         "description": (
-                            "Force a specific model identifier (e.g. 'qwen2.5-coder:7b-instruct-q4_K_M'). "
-                            "Omit to let PvX route automatically based on task category."
+                            "The model to run this task on. REQUIRED. "
+                            "Use list_available_models() to see what is installed. "
+                            "Examples: 'qwen2.5-coder:14b', 'deepseek-r1:7b', 'claude'."
                         ),
                     },
                     "priority": {
@@ -230,16 +233,13 @@ async def list_tools() -> list[types.Tool]:
                         "type": ["string", "null"],
                         "default": None,
                         "description": (
-                            "Override the auto-classifier. Valid values: "
-                            "complex_code, boilerplate, simple_refactor, formatting, "
-                            "docstrings, algorithm_design, ml_pipeline, oop_design, "
-                            "code_review, system_design, math_proof, chain_of_thought, "
-                            "debugging_logic, large_context, codebase_analysis, "
-                            "architecture, final_review. Omit for auto-detection."
+                            "Optional label for display in the dashboard. "
+                            "No effect on routing — just for human readability. "
+                            "Example: 'boilerplate', 'complex_code', 'reasoning'."
                         ),
                     },
                 },
-                "required": ["prompt"],
+                "required": ["prompt", "model"],
             },
         ),
         types.Tool(

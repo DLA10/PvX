@@ -14,14 +14,9 @@ logger = structlog.get_logger()
 
 class TaskSubmit(BaseModel):
     prompt: str
-    # Priority: 5 = critical/urgent (preempts running tasks)
-    #           4 = high
-    #           3 = normal (default)
-    #           2 = low
-    #           1 = background (never preempts)
+    model: str                   # Required — Claude Code specifies the model explicitly
     priority: int = 3
-    model: Optional[str] = None
-    category: Optional[str] = None
+    category: Optional[str] = None   # Optional label for display only
     depends_on: List[str] = []
 
 
@@ -32,55 +27,35 @@ async def submit_task(task_in: TaskSubmit) -> dict:
     if app_state is None:
         raise HTTPException(status_code=503, detail="PvX not started")
 
-    # Classify the prompt when no category is explicitly provided.
-    # This runs the full keyword → cache → Claude escalation chain so
-    # tasks are routed to the right model rather than always defaulting
-    # to "complex_code".
-    if task_in.category:
-        category = task_in.category
-    else:
-        classification = app_state.classifier.classify(task_in.prompt)
-        category = classification.category
-        logger.debug("task_classified",
-                     category=category,
-                     confidence=classification.confidence,
-                     classified_by=classification.classified_by)
-
-    tmp_for_routing = Task(
-        id="tmp",
-        model="",
-        prompt=task_in.prompt,
-        category=category,
-        status="pending",
-        priority=task_in.priority,
-        depends_on=[],
-        requires_vram=True,
-        requires_system_idle=False,
-        retry_count=0,
-        max_retries=3,
-        created_at=datetime.now(),
-    )
-    routed_model: str = task_in.model or app_state.router.route(tmp_for_routing)
+    # Validate the model is known (or is "claude")
+    if task_in.model != "claude" and task_in.model not in app_state.vram.MODEL_VRAM_MB:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unknown model '{task_in.model}'. "
+                "Call list_available_models() to see what is installed."
+            ),
+        )
 
     task = Task(
         id=f"task_{uuid.uuid4().hex[:12]}",
-        model=routed_model,
+        model=task_in.model,
         prompt=task_in.prompt,
-        category=category,
+        category=task_in.category or "",
         status="pending",
-        priority=task_in.priority,
+        priority=max(1, min(5, task_in.priority)),
         depends_on=task_in.depends_on,
-        requires_vram=True,
+        requires_vram=task_in.model != "claude",
         requires_system_idle=False,
         retry_count=0,
         max_retries=3,
         created_at=datetime.now(),
     )
     app_state.queue.pending_tasks.append(task)
-    logger.info("task_submitted_via_api", task_id=task.id, priority=task.priority,
-                category=category)
+    logger.info("task_submitted", task_id=task.id, model=task.model,
+                priority=task.priority, category=task.category)
     return {"task_id": task.id, "status": task.status, "model": task.model,
-            "category": category}
+            "category": task.category}
 
 
 @router.get("/")
@@ -143,48 +118,5 @@ async def cancel_task(task_id: str) -> dict:
 
     task.status = "failed"
     task.error = "CANCELLED_BY_USER"
-    logger.info("task_cancelled_via_api", task_id=task_id)
+    logger.info("task_cancelled", task_id=task_id)
     return {"task_id": task_id, "status": "cancelled"}
-
-
-@router.post("/analyze")
-async def analyze_task(prompt: str) -> dict:
-    from pvx.main import app_state
-
-    if app_state is None:
-        raise HTTPException(status_code=503, detail="PvX not started")
-
-    classification = app_state.classifier.classify(prompt)
-    tmp_task = Task(
-        id="tmp",
-        model="",
-        prompt=prompt,
-        category=classification.category,
-        status="pending",
-        priority=3,
-        depends_on=[],
-        requires_vram=True,
-        requires_system_idle=False,
-        retry_count=0,
-        max_retries=3,
-        created_at=datetime.now(),
-    )
-    routed_model: str = app_state.router.route(tmp_task)
-    vram_state = app_state.vram.poll()
-    required_mb: int = app_state.vram.MODEL_VRAM_MB.get(routed_model, 0)
-
-    return {
-        "prompt": prompt,
-        "classification": {
-            "category": classification.category,
-            "confidence": classification.confidence,
-            "reasoning": classification.reasoning,
-            "classified_by": classification.classified_by,
-        },
-        "routing": {"model": routed_model},
-        "vram": {
-            "required_mb": required_mb,
-            "free_mb": vram_state.free_mb,
-            "sufficient": vram_state.free_mb >= required_mb,
-        },
-    }

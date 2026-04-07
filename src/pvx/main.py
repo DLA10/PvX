@@ -11,13 +11,10 @@ import ollama
 import structlog
 import uvicorn
 
-from pvx.core.circuit_breaker import CircuitBreaker
-from pvx.core.classifier import TaskClassifier
 from pvx.core.compressor import ContextCompressor
 from pvx.core.config import AppConfig, load_config
 from pvx.core.events import event_bus
 from pvx.core.queue import TaskQueueEngine
-from pvx.core.router import TaskRouter
 from pvx.core.vram import VRAMManager, State
 from pvx.models.claude import ClaudeCodeModel
 from pvx.models.ollama import OllamaModel
@@ -45,8 +42,6 @@ class AppState:
     config: AppConfig
     vram: VRAMManager
     queue: TaskQueueEngine
-    router: TaskRouter
-    classifier: TaskClassifier
     claude_model: ClaudeCodeModel
     compressor: ContextCompressor
     ollama_models: Dict[str, OllamaModel] = field(default_factory=dict)
@@ -212,14 +207,10 @@ async def orchestration_loop(state: AppState) -> None:
 
         task.status = "running"
         task.started_at = datetime.now()
-        model_name: str = "claude"
+        model_name: str = task.model  # Claude Code has already decided the model
 
         try:
-            # 1. Route the task (definitive — update task.model to match)
-            model_name = state.router.route(task)
-            task.model = model_name  # Fix split-brain: keep task.model in sync
-
-            # 2. Unload previous model if switching to a different one
+            # 1. Unload previous model if switching to a different one
             if (model_name != "claude"
                     and state.current_ollama_model is not None
                     and state.current_ollama_model != model_name):
@@ -228,7 +219,7 @@ async def orchestration_loop(state: AppState) -> None:
                             to_model=model_name)
                 await _unload_current_model(state)
 
-            # 3. Resolve model instance
+            # 2. Resolve model instance
             if model_name == "claude":
                 model = state.claude_model
             else:
@@ -243,27 +234,23 @@ async def orchestration_loop(state: AppState) -> None:
                 state.vram.start_generation()
                 state.current_ollama_model = model_name
 
-            # 4. Build history from resume context or dependency outputs
+            # 3. Build history from resume context or dependency outputs
             history = _build_task_history(task, state)
 
-            # 5. Compress context if it has grown too large.
-            # The compressor uses the smallest local model (qwen3b by default).
-            # For Claude tasks this is free (no VRAM conflict).
-            # For Ollama tasks the compressor's can_load() check prevents it from
-            # running if insufficient VRAM is available — it skips gracefully.
+            # 4. Compress context if it has grown too large
             pre_compress_len = len(history)
             history = state.compressor.maybe_compress(model_name, history)
             if len(history) < pre_compress_len:
                 state.session_compressions += 1
 
-            # 6. Generate
+            # 5. Generate
             result = model.generate(
                 prompt=task.prompt,
                 history=history,
                 task_id=task.id,
             )
 
-            # 7. Handle result
+            # 6. Handle result
             if result.error:
                 task.status = "failed"
                 task.error = result.error
@@ -358,22 +345,6 @@ async def _start_async() -> None:
         if m.fits_in_vram:
             vram.update_model_vram(m.name, m.vram_estimate_mb)
 
-    # Merge routing rules: user-configured rules take priority over auto-discovered.
-    # Only fill in categories that aren't explicitly set in config.
-    if discovery.routing_rules:
-        user_configured = set(config.routing.rules.keys())
-        auto_filled = []
-        for cat, model in discovery.routing_rules.items():
-            if cat not in user_configured:
-                config.routing.rules[cat] = model
-                auto_filled.append(f"{cat}→{model}")
-        # Merge fallback chains — don't drop user-configured ones
-        for model, fallbacks in discovery.fallback_chain.items():
-            if model not in config.routing.fallback_chain:
-                config.routing.fallback_chain[model] = fallbacks
-        if auto_filled:
-            logger.info("pvx_routing_auto_filled", categories=auto_filled)
-
     # Update compression model only if not explicitly set in config
     if discovery.compression_model and config.context.compression_model in (
         "qwen2.5-coder:3b", ""
@@ -382,33 +353,26 @@ async def _start_async() -> None:
         logger.info("pvx_compression_model_set", model=discovery.compression_model)
 
     queue = TaskQueueEngine(vram_manager=vram, config=config)
-    router = TaskRouter(config=config, vram_manager=vram)
-    circuit_breaker = CircuitBreaker()
-    claude_model = ClaudeCodeModel(circuit_breaker=circuit_breaker)
-    # Share the same circuit breaker with the classifier so rate-limit storms
-    # don't cascade into unlimited classification escalation calls
-    classifier = TaskClassifier(cli_model=claude_model, circuit_breaker=circuit_breaker)
+    claude_model = ClaudeCodeModel()
     compressor = ContextCompressor(vram_manager=vram, config=config)
 
     app_state = AppState(
         config=config,
         vram=vram,
         queue=queue,
-        router=router,
-        classifier=classifier,
         claude_model=claude_model,
         compressor=compressor,
         ollama_models={},
     )
 
     # Store discovery metadata so /api/models/available can return rich model info
-    # (capability, tier, suggested_for) without re-running discovery on every request.
+    # (capability, tier, size_gb) without re-running discovery on every request.
+    # suggested_for is derived from capability in the route handler.
     app_state._discovery_meta = {
         m.name: {
             "capability": m.capability,
             "tier": m.tier,
             "size_gb": m.size_gb,
-            "suggested_for": m.assigned_categories,
         }
         for m in discovery.models
     }
