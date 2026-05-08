@@ -1,4 +1,5 @@
 # PvX — Hardware-Aware AI Orchestration
+# STILL UNDER CONSTRUCTION
 
 PvX is an orchestration layer that routes agentic tasks between your local
 Ollama models and Claude Code based on task complexity and available VRAM.
